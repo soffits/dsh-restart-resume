@@ -55,5 +55,6 @@ A DeepSeek Harness host plugin: one scan per DSH process, shortly after start, t
 
 - Conventional Commits, one-line subjects, a body only when the why isn't obvious. The repo's local author identity is set on purpose.
 - Squash merges. Whoever merges a branch deletes it (`gh pr merge --squash --delete-branch`) and runs `git fetch --prune`.
+- PR titles are Conventional Commit subjects (`feat: ...`, `fix(scope): ...`), because a squash merge makes the title the commit on the default branch; CI checks it.
 - In GitHub Actions, reference well-known actions by major tag (`@v4`), not by commit SHA.
 - Releases: move the `Unreleased` part of `CHANGELOG.md` under the new version's heading, bump the version, squash-merge to `main` (`feat: <summary> (vX.Y.Z)`), and once CI is green on that commit, tag `vX.Y.Z` and publish to npm from `main`.
