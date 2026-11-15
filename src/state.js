@@ -24,25 +24,26 @@ export function decisionLog(dir) {
 }
 
 /**
- * Note the moment this DSH process stops (the row's scope is disposed). Synchronous, since a
- * stopping process does not wait for promises. A hard death writes nothing, and needs nothing:
- * its turns end `interrupted`, which needs no stop time to be told apart.
+ * Note the moment this DSH process stops (the row's scope is disposed), and when it started, so
+ * the next process knows which jobs were this one's. Synchronous, since a stopping process does
+ * not wait for promises. A hard death writes nothing, and needs nothing: its turns end
+ * `interrupted`, which needs no stop time to be told apart.
  */
-export function recordStop(dir, now) {
+export function recordStop(dir, now, started) {
 	try {
 		mkdirSync(dir, { recursive: true });
-		writeFileSync(`${dir}/stopped.json`, JSON.stringify({ at: now }));
+		writeFileSync(`${dir}/stopped.json`, JSON.stringify(started === undefined ? { at: now } : { at: now, started }));
 	} catch {
 		// without it, a subagent of an idle parent cut by the stop is left alone
 	}
 }
 
-/** When the previous DSH process stopped, or undefined when it never recorded one. */
-export function previousStop(dir) {
+/** When the previous DSH process stopped and started, each undefined when it never recorded one. */
+export function previousRun(dir) {
 	try {
-		const at = JSON.parse(readFileSync(`${dir}/stopped.json`, 'utf8')).at;
-		return typeof at === 'number' ? at : undefined;
+		const { at, started } = JSON.parse(readFileSync(`${dir}/stopped.json`, 'utf8'));
+		return { stop: typeof at === 'number' ? at : undefined, start: typeof started === 'number' ? started : undefined };
 	} catch {
-		return undefined;
+		return { stop: undefined, start: undefined };
 	}
 }

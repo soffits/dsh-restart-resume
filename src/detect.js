@@ -104,6 +104,84 @@ export function resumeStreak(events) {
 	}
 }
 
+/** How close a job settled by DSH's own teardown must be to the recorded stop to count as killed by it. */
+export const JOB_STOP_WINDOW_MS = 120_000;
+
+/**
+ * The background jobs the previous DSH process killed: registered before this process started and
+ * never settled (DSH keeps its job registry in the process, so a stop leaves them open in the
+ * log), or settled by DSH's teardown at the recorded stop. A job that ran out on its own, or that
+ * someone killed, settled with its own status before the stop and is not one.
+ * @param {readonly object[]} events - the session's raw events, oldest first.
+ * Only jobs of the previous process count (registered after it started, when that is known), and
+ * none a notice of this plugin already named: an older process's lost job was dealt with then.
+ * @param {number} bootTime - epoch ms this DSH process started.
+ * @param {number | undefined} previousStop - epoch ms the previous process stopped, if known.
+ * @param {number | undefined} [previousStart] - epoch ms the previous process started, if known.
+ * @returns {{ id: string, label: string }[]}
+ */
+export function lostJobs(events, bootTime, previousStop, previousStart) {
+	const open = new Map();
+	const killed = [];
+	for (const event of events) {
+		const data = event.data ?? {};
+		if (event.type === 'user/message' && data.source?.kind === NOTICE_KIND) {
+			const text = (data.content ?? []).map((part) => part?.text ?? '').join(' ');
+			for (const id of [...open.keys()]) if (text.includes(id)) open.delete(id);
+			continue;
+		}
+		if (event.type === 'job/registered' && data.jobId) open.set(data.jobId, data);
+		else if (event.type === 'job/settled' && open.has(data.jobId)) {
+			const job = open.get(data.jobId);
+			open.delete(data.jobId);
+			const atStop = previousStop !== undefined && Math.abs((data.finishedAt ?? event.time ?? 0) - previousStop) <= JOB_STOP_WINDOW_MS;
+			if (data.cause === 'teardown' && atStop) killed.push(job);
+		}
+	}
+	// A foreground tool call registers a job too; one cut with its turn belongs to that cut, and the
+	// cut-turn notice covers it. A job older than an earlier cut died with that earlier stop.
+	const cuts = cutTurns(events);
+	const tail = lastCut(events);
+	const tailCut = tail !== undefined && cuts.length > 0 && cuts[cuts.length - 1].end === tail.time ? cuts[cuts.length - 1] : undefined;
+	const olderCut = Math.max(0, ...cuts.filter((c) => c !== tailCut).map((c) => c.end));
+	const ofPreviousProcess = (job) => {
+		const at = job.startedAt ?? 0;
+		if (at >= bootTime || at < olderCut) return false;
+		if (tailCut !== undefined && at >= tailCut.start && at <= tailCut.end) return false;
+		return previousStart === undefined || at >= previousStart;
+	};
+	return [...killed, ...[...open.values()].filter(ofPreviousProcess)]
+		.map((job) => ({ id: job.jobId, label: String(job.label ?? '').split(/\s+/).join(' ').trim().slice(0, 160) }));
+}
+
+/** Every turn a shutdown cut, as { start, end } in epoch ms, oldest first. */
+function cutTurns(events) {
+	const out = [];
+	let start = 0;
+	for (const event of events) {
+		if (event.type === 'turn/start') start = event.time ?? 0;
+		else if (event.type === 'turn/end' && (shutdownCut(endKind(event)) || endKind(event) === 'parent'))
+			out.push({ start, end: event.time ?? 0 });
+	}
+	return out;
+}
+
+/** When the session's newest turn started (epoch ms), or 0. */
+function lastTurnStart(events) {
+	for (let i = events.length - 1; i >= 0; i -= 1) if (events[i].type === 'turn/start') return events[i].time ?? 0;
+	return 0;
+}
+
+/** Whether this plugin's notice already waits in the session's inbox after its last turn. */
+function noticeWaiting(events) {
+	for (let i = events.length - 1; i >= 0; i -= 1) {
+		const event = events[i];
+		if (event.type === 'turn/start' || event.type === 'turn/end') return false;
+		if (event.type === 'agent/inbox/spliced' && (event.data?.inserted ?? []).some((m) => m?.source?.kind === NOTICE_KIND)) return true;
+	}
+	return false;
+}
+
 /**
  * What to do with one session, from its header and log alone.
  * @param {object} input
@@ -113,14 +191,25 @@ export function resumeStreak(events) {
  * @param {number} input.maxAgeMs - a cut older than this is left alone.
  * @param {readonly string[]} input.skipProviders - providers whose sessions another plugin resumes.
  * @param {number} input.maxResumes - consecutive resumes after which a session is left alone.
- * @returns {{ resume: false, why: string } | { resume: true, child: boolean, parentId?: string, cut: object }}
+ * @param {number} [input.bootTime] - epoch ms this DSH process started.
+ * @param {number} [input.previousStop] - epoch ms the previous process stopped, if known.
+ * @param {number} [input.previousStart] - epoch ms the previous process started, if known.
+ * @returns {{ resume: false, why: string } | { resume: true, child: boolean, parentId?: string, cut?: object,
+ *   jobs: { id: string, label: string }[] }} `cut` is absent when only background jobs were lost.
  */
-export function assess({ header, events, now, maxAgeMs, skipProviders, maxResumes }) {
-	const cut = lastCut(events);
-	if (cut === undefined) return { resume: false, why: 'no cut turn at the tail' };
+export function assess({ header, events, now, maxAgeMs, skipProviders, maxResumes, bootTime = now, previousStop, previousStart }) {
 	const child = header.origin === 'subagent' && Boolean(header.parentSession);
-	if (!shutdownCut(cut.kind) && !(child && cut.kind === 'parent'))
+	const jobs = lostJobs(events, bootTime, previousStop, previousStart);
+	const cut = lastCut(events);
+	const turnCut = cut !== undefined && (shutdownCut(cut.kind) || (child && cut.kind === 'parent'));
+	if (!turnCut) {
+		// An idle session whose background jobs the stop killed was still waiting on them: their
+		// reports would have woken it, so nothing will now. Every provider: none resumes this.
+		if (jobs.length > 0 && lastTurnStart(events) < bootTime && !noticeWaiting(events))
+			return child ? { resume: true, child, parentId: header.parentSession, jobs } : { resume: true, child, jobs };
+		if (cut === undefined) return { resume: false, why: 'no cut turn at the tail' };
 		return { resume: false, why: `last turn ended ${cut.kind}` };
+	}
 	if (now - cut.time > maxAgeMs) return { resume: false, why: 'cut too long ago' };
 	if (cut.waiting.includes(NOTICE_KIND)) return { resume: false, why: 'a resume notice is already waiting' };
 	// A subagent cut because its parent's turn was cut is ours on every provider: the provider only
@@ -133,7 +222,7 @@ export function assess({ header, events, now, maxAgeMs, skipProviders, maxResume
 		return { resume: false, why: 'a scheduled run, which its scheduler reruns' };
 	if (resumeStreak(events) >= maxResumes)
 		return { resume: false, why: `already resumed ${maxResumes} times in a row` };
-	return child ? { resume: true, child, parentId: header.parentSession, cut } : { resume: true, child, cut };
+	return child ? { resume: true, child, parentId: header.parentSession, cut, jobs } : { resume: true, child, cut, jobs };
 }
 
 /** How close a parent's aborted turn must be to its child's `parent` cut to be its cause; DSH
