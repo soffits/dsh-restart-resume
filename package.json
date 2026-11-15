@@ -1,0 +1,57 @@
+{
+  "name": "@soffits/dsh-restart-resume",
+  "version": "0.1.0",
+  "description": "Continue the turns a DeepSeek Harness restart cut off, subagents included: one scan after start, a follow-up message for each cut session, children resumed through their parent.",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "src/*.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=22",
+    "dsh": ">=0.2.2-rc.1 <0.3.0-0"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "check": "for f in index.js src/*.js test/*.js tools/*.mjs; do node --check \"$f\" || exit 1; done"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.1 <5.0.0",
+    "@deepseek-ai/dsh-llm": ">=0.2.2-rc.1 <0.3.0-0",
+    "@deepseek-ai/schemastery": "^3.18.5"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "restart",
+    "resume",
+    "subagent"
+  ],
+  "author": "Sakina",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/soffits/dsh-restart-resume.git"
+  },
+  "homepage": "https://github.com/soffits/dsh-restart-resume#readme",
+  "bugs": {
+    "url": "https://github.com/soffits/dsh-restart-resume/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
