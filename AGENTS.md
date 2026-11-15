@@ -14,7 +14,7 @@ A DeepSeek Harness host plugin: one scan per DSH process, shortly after start, t
 ## Checks
 
 - `npm run check` (syntax) and `npm test` (unit tests) run in CI on Node 22 and 24.
-- `node tools/e2e.mjs term`, `node tools/e2e.mjs term idle` (the parent ended its turn before the stop) and `node tools/e2e.mjs kill` need the `dsh` CLI on PATH and run about a minute each; run both before a release that touches detection or the scan. They never touch a real `DSH_HOME`; keep it that way (a second DSH on a live profile can take over that profile's running work). `--keep` leaves the run directory for reading the session logs.
+- `node tools/e2e.mjs term`, `node tools/e2e.mjs term idle` (the parent ended its turn before the stop) and `node tools/e2e.mjs kill` need the `dsh` CLI on PATH and run about a minute each; run all three before a release that touches detection or the scan. They never touch a real `DSH_HOME`; keep it that way (a second DSH on a live profile can take over that profile's running work). `--keep` leaves the run directory for reading the session logs.
 - When DSH changes its session log format or the subagent service, take a fresh fixture from a real cut: the shapes in the tests are what DSH wrote, not what its docs say.
 
 ## Rules for changes
