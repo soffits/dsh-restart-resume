@@ -7,7 +7,9 @@
 // check passes when the root and the child each get exactly one resume message, both answer it,
 // the root's notice names the child, and a further restart resumes nothing.
 //
-// Usage: node tools/e2e.mjs [term|kill] [--keep]
+// With `idle`, the root ends its turn after starting the child, so only the child is cut.
+//
+// Usage: node tools/e2e.mjs [term|kill] [idle] [--keep]
 import { spawn, execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync, appendFileSync } from 'node:fs';
@@ -18,7 +20,8 @@ import { zstdDecompressSync } from 'node:zlib';
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const mode = process.argv.includes('kill') ? 'kill' : 'term';
 const keep = process.argv.includes('--keep');
-const root = join(REPO, '.e2e', `run-${mode}-${Date.now()}`);
+const idle = process.argv.includes('idle');
+const root = join(REPO, '.e2e', `run-${mode}${idle ? '-idle' : ''}-${Date.now()}`);
 const home = join(root, 'home');
 const state = join(root, 'state');
 const work = join(root, 'work');
@@ -54,7 +57,7 @@ function decide(body) {
 		const calls = messages.flatMap((m) => m.tool_calls ?? []).map((c) => c.function?.name);
 		if (!calls.includes('subagent'))
 			return { who: 'root', tool: ['subagent', { description: 'e2e child', prompt: 'E2E-CHILD: wait for the job, then answer.' }], toolNames };
-		if (!calls.includes('bash')) return { who: 'root', tool: ['bash', { command: 'sleep 600', description: 'wait' }] };
+		if (!calls.includes('bash') && !idle) return { who: 'root', tool: ['bash', { command: 'sleep 600', description: 'wait' }] };
 		return { who: 'root', text: 'root idle' };
 	}
 	return { who: 'other', text: 'Title' };
@@ -317,7 +320,8 @@ try {
 	first.request('session/prompt', { sessionId: rootId, prompt: [{ type: 'text', text: 'E2E-ROOT: start one subagent, then wait.' }] }, 3_600_000).catch(() => {});
 	await until('root and child both sleeping', () => {
 		const lines = existsSafe(modelLog) ? modelLines() : [];
-		return lines.some((l) => l.who === 'root' && l.tool?.[0] === 'bash') && lines.some((l) => l.who === 'child' && l.tool?.[0] === 'bash');
+		const rootWaiting = idle ? lines.some((l) => l.who === 'root' && l.text === 'root idle') : lines.some((l) => l.who === 'root' && l.tool?.[0] === 'bash');
+		return rootWaiting && lines.some((l) => l.who === 'child' && l.tool?.[0] === 'bash');
 	});
 	await sleep(3000);
 	say(`stopping DSH with ${mode === 'kill' ? 'SIGKILL' : 'SIGTERM'}`);
@@ -332,7 +336,7 @@ try {
 	const beforeSecond = modelLines().length;
 	await until('both resumed answers', () => {
 		const lines = modelLines().slice(beforeSecond);
-		return lines.some((l) => l.text === 'ROOT-RESUMED-OK') && lines.some((l) => l.text === 'CHILD-RESUMED-OK') && lines.some((l) => l.text === 'ROOT-SAW-CHILD');
+		return (idle || lines.some((l) => l.text === 'ROOT-RESUMED-OK')) && lines.some((l) => l.text === 'CHILD-RESUMED-OK') && lines.some((l) => l.text === 'ROOT-SAW-CHILD');
 	}, 120_000).catch((e) => say(String(e)));
 	await sleep(5000);
 	await second.stop('SIGTERM');
@@ -342,11 +346,14 @@ try {
 	const childMsgs = userTexts(logs.get(childId));
 	const rootNotices = rootMsgs.filter((m) => m.text.includes('[Restart Resume]'));
 	const childNotices = childMsgs.filter((m) => m.text.includes('[Restart Resume]'));
-	expect(rootNotices.length === 1, `root got one resume message (got ${rootNotices.length}, source ${rootNotices[0]?.kind})`);
-	expect(rootNotices[0]?.text.includes(childId), 'the root notice names the child');
+	if (idle) expect(rootNotices.length === 0, `the idle root got no resume message (got ${rootNotices.length})`);
+	else {
+		expect(rootNotices.length === 1, `root got one resume message (got ${rootNotices.length}, source ${rootNotices[0]?.kind})`);
+		expect(rootNotices[0]?.text.includes(childId), 'the root notice names the child');
+	}
 	expect(childNotices.length === 1, `child got one resume message (got ${childNotices.length}, source ${childNotices[0]?.kind})`);
 	const after = modelLines().slice(beforeSecond);
-	expect(after.filter((l) => l.text === 'ROOT-RESUMED-OK').length === 1, 'the root answered the resume once');
+	expect(after.filter((l) => l.text === 'ROOT-RESUMED-OK').length === (idle ? 0 : 1), 'the root answered a resume only if it was cut');
 	expect(after.filter((l) => l.text === 'CHILD-RESUMED-OK').length === 1, 'the child answered the resume once');
 	expect(after.some((l) => l.text === 'ROOT-SAW-CHILD'), "the root got the child's result");
 

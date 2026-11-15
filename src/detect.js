@@ -123,8 +123,11 @@ export function assess({ header, events, now, maxAgeMs, skipProviders, maxResume
 		return { resume: false, why: `last turn ended ${cut.kind}` };
 	if (now - cut.time > maxAgeMs) return { resume: false, why: 'cut too long ago' };
 	if (cut.waiting.includes(NOTICE_KIND)) return { resume: false, why: 'a resume notice is already waiting' };
+	// A subagent cut because its parent's turn was cut is ours on every provider: the provider only
+	// sees the child's turn aborted by its parent, the same as when someone stops the parent, so it
+	// cannot know a shutdown did it. Its parent's log can (see parentShutDown).
 	const provider = lastProvider(events);
-	if (provider !== undefined && skipProviders.includes(provider))
+	if (provider !== undefined && skipProviders.includes(provider) && !(child && cut.kind === 'parent'))
 		return { resume: false, why: `on ${provider}, which resumes its own sessions` };
 	if (turnSources(events, cut.index).includes('schedule'))
 		return { resume: false, why: 'a scheduled run, which its scheduler reruns' };
@@ -133,19 +136,33 @@ export function assess({ header, events, now, maxAgeMs, skipProviders, maxResume
 	return child ? { resume: true, child, parentId: header.parentSession, cut } : { resume: true, child, cut };
 }
 
-/** How close a child's `parent` cut must be to its parent's own shutdown cut to count as the same shutdown. */
-export const SAME_SHUTDOWN_MS = 30_000;
+/** How close a parent's aborted turn must be to its child's `parent` cut to be its cause; DSH
+ *  cuts the children within milliseconds of the parent (25 to 100 ms in real logs). */
+export const SAME_CUT_MS = 5_000;
+/** How close a child's `parent` cut must be to the recorded stop of the previous DSH process. */
+export const STOP_WINDOW_MS = 120_000;
 
 /**
- * Whether a child cut with cause `parent` was cut by the shutdown, judged by its parent's log: the
- * parent's turn covering that moment ended `interrupted` or `disposed` close to the child's cut.
- * A user stop of the parent also cuts its children with cause `parent`, and those stay stopped.
+ * Whether a child cut with cause `parent` was cut by DSH shutting down. A user stop of the parent
+ * gives its children the same cause, and those stay stopped.
+ * - When the parent's own turn was cut at that moment, that turn says it: `interrupted` or
+ *   `disposed` is a shutdown, a user stop or a hand-over is not. A turn that ended normally cuts
+ *   no children, so it is not the cause.
+ * - Otherwise the parent was idle, and DSH's teardown of the parent's tree is what cut the child,
+ *   so the cut must lie at the previous process's recorded stop.
+ * @param {readonly object[]} parentEvents - the parent's raw events.
+ * @param {number} childCutTime - epoch ms of the child's `turn/end`.
+ * @param {number | undefined} previousStop - epoch ms the previous DSH process stopped, if known.
  */
-export function parentShutDown(parentEvents, childCutTime) {
+export function parentShutDown(parentEvents, childCutTime, previousStop) {
+	let nearest;
 	for (const event of parentEvents) {
 		if (event.type !== 'turn/end') continue;
-		if (Math.abs((event.time ?? 0) - childCutTime) > SAME_SHUTDOWN_MS) continue;
-		if (shutdownCut(endKind(event))) return true;
+		const reason = event.data?.reason?.kind;
+		if (reason !== 'aborted' && reason !== 'interrupted') continue;
+		const gap = Math.abs((event.time ?? 0) - childCutTime);
+		if (gap <= SAME_CUT_MS && (nearest === undefined || gap < nearest.gap)) nearest = { gap, event };
 	}
-	return false;
+	if (nearest !== undefined) return shutdownCut(endKind(nearest.event));
+	return previousStop !== undefined && Math.abs(previousStop - childCutTime) <= STOP_WINDOW_MS;
 }
