@@ -39,7 +39,8 @@ export async function scan(deps) {
 	// Not filtered on `blank`: DSH reports a cold subagent whose turn never finished as blank.
 	const listed = await deps.listSessions();
 	const summaries = listed.filter((s) => !s.running && now - (s.updatedAt ?? 0) <= maxAgeMs + 5 * 60_000);
-	await log(`scan: ${summaries.length} of ${listed.length} sessions changed recently`);
+	const stop = deps.previousStop === undefined ? 'unknown' : new Date(deps.previousStop).toISOString();
+	await log(`scan: ${summaries.length} of ${listed.length} sessions changed recently; previous DSH stop ${stop}`);
 	const archived = deps.archived();
 	const plan = [];
 	for (const summary of summaries) {
@@ -73,7 +74,7 @@ export async function scan(deps) {
 				await log(`skip ${id}: parent ${verdict.parentId} unreadable: ${String(error)}`);
 				continue;
 			}
-			if (!parentShutDown(parent.events, verdict.cut.time)) {
+			if (!parentShutDown(parent.events, verdict.cut.time, deps.previousStop)) {
 				await log(`skip ${id}: its parent was stopped, not shut down`);
 				continue;
 			}

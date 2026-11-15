@@ -40,7 +40,10 @@ test('a subagent cut by a hard death or a graceful stop is resumed through its p
 
 test('a subagent cut with its parent counts only when the parent was shut down too', () => {
 	const shut = fixture('child-parent-shutdown');
-	const verdict = judge(shut, { skipProviders: [] });
+	// On claude-code, like every fixture here: dsh-oh-my-claude interrupts such a child and keeps no
+	// mark of it, so it is resumed from here whatever the provider.
+	assert.equal(lastProvider(shut.events), 'claude-code');
+	const verdict = judge(shut);
 	assert.equal(verdict.resume, true);
 	assert.equal(verdict.cut.kind, 'parent');
 	assert.equal(parentShutDown(fixture('root-scheduled-disposed').events, verdict.cut.time), true);
@@ -49,6 +52,21 @@ test('a subagent cut with its parent counts only when the parent was shut down t
 	assert.equal(parentShutDown(fixture('root-claude-disposed').events, lastCut(stopped.events).time), false);
 	const other = fixture('child-parent-other');
 	assert.equal(parentShutDown(fixture('parent-running').events, lastCut(other.events).time), false);
+});
+
+test('a subagent of an idle parent counts when the cut lies at the previous stop', () => {
+	// The parent's last turn completed long before; DSH's teardown cut the child with cause parent.
+	const idleParent = fixture('parent-running').events;
+	const childCut = idleParent.at(-1).time + 3_600_000;
+	assert.equal(parentShutDown(idleParent, childCut, undefined), false, 'no stop recorded: left alone');
+	assert.equal(parentShutDown(idleParent, childCut, childCut + 1500), true, 'cut 1.5 s before the stop');
+	assert.equal(parentShutDown(idleParent, childCut, childCut + 600_000), false, 'a stop ten minutes later is another event');
+	// A parent turn that just completed cut nothing; the stop did.
+	const completed = [...idleParent, { type: 'turn/end', seq: 1, time: childCut - 3000, data: { turn: 9, reason: { kind: 'completed' } } }];
+	assert.equal(parentShutDown(completed, childCut, childCut + 400), true);
+	// A parent turn ended by hand at that moment wins over a stop nearby.
+	const stopped = [...idleParent, { type: 'turn/end', seq: 1, time: childCut - 200, data: { turn: 9, reason: { kind: 'aborted', reason: { kind: 'user' } } } }];
+	assert.equal(parentShutDown(stopped, childCut, childCut + 1500), false);
 });
 
 test('a user stop, a fallback hand-over and a later turn are left alone', () => {
