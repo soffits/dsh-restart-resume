@@ -16,6 +16,9 @@
 - **A notice still waiting from an earlier start is not stacked** (its source kind is in the inbox splices after the cut).
 - **Provider** is the one in the session's last `request/header`, the route the cut turn actually ran on.
 
+- **Killed background jobs count as cut work.** A session that ended its turn waiting for a job's report is as stuck after a restart as one cut mid-turn, and no provider plugin wakes it, so these are continued on every provider. Lost means registered before this process started and never settled (DSH's job registry lives in the process; real logs after a graceful restart show no settlement), or settled by teardown within 2 minutes of the recorded stop. A teardown at any other time is DSH disposing the owner (a subagent going idle, an archive), not a restart, and is left alone.
+- **Wider listing window for killed jobs** (`jobMaxAgeHours`, 24 h): a session waiting on a long job last wrote when it started it.
+
 ## Resuming
 
 - **Children through `subagents.sendMessage` from the parent Agent**: the public service method, which cold-resumes the child from its descriptor. The host-only prompt path in `dsh-subagent/internal` would keep our own source kind on the child's message, but it is an internal export.
