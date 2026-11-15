@@ -7,7 +7,7 @@
 import z from '@deepseek-ai/schemastery';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import { scan } from './src/resume.js';
-import { decisionLog, stateDir } from './src/state.js';
+import { decisionLog, previousStop, recordStop, stateDir } from './src/state.js';
 
 export const name = 'dsh-restart-resume';
 export const inject = ['sessionController', 'sessionQuery', 'agents', 'sessions'];
@@ -27,13 +27,21 @@ export const Config = z.object({
 /** Set once a scan has started in this process: a config edit applies the row again, and a scan
  *  then would find nothing new to do but cost a read of every recent log. */
 const SCANNED = Symbol.for('dsh-restart-resume.scanned');
+/** When the previous DSH process stopped, read once per process: a config edit disposes the row,
+ *  which records a stop of its own. */
+const PREVIOUS_STOP = Symbol.for('dsh-restart-resume.previous-stop');
 /** Applied later than this after DSH started, the plugin was installed or enabled into a running
  *  DSH: there is no restart to recover from. */
 const BOOT_WINDOW_S = 300;
 
 export function apply(ctx, config) {
-	if (!config.enabled || globalThis[SCANNED]) return;
-	const log = decisionLog(stateDir());
+	if (!config.enabled) return;
+	const dir = stateDir();
+	if (!(PREVIOUS_STOP in globalThis)) globalThis[PREVIOUS_STOP] = previousStop(dir);
+	// Every process records when it stops, scan or not: the next one reads it.
+	ctx.effect(() => () => recordStop(dir, Date.now()));
+	if (globalThis[SCANNED]) return;
+	const log = decisionLog(dir);
 	if (process.uptime() > BOOT_WINDOW_S) {
 		void log('not at boot: no scan in this process');
 		globalThis[SCANNED] = true;
@@ -46,6 +54,7 @@ export function apply(ctx, config) {
 			config,
 			log,
 			now: Date.now,
+			previousStop: globalThis[PREVIOUS_STOP],
 			listSessions: async () => (await ctx.sessionController.list({}, AbortSignal.timeout(120_000))).items,
 			readSession: (id) => ctx.sessionQuery.readSession(id),
 			archived: () => new Set(ctx.get('workspaceRegistry')?.archivedSessionIds ?? []),

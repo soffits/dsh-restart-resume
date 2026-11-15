@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.1.1]
+
+### Fixed
+
+- A subagent cut with cause `parent` is now continued when its parent was idle at the stop, not only when the parent's own turn was cut: DSH's teardown cuts an idle parent's running children that way. The plugin records when DSH stops (`stopped.json`) and checks the cut against it. A parent turn that ended normally just before no longer counts as the cause.
+- Such subagents are continued on every provider, also those in `skipProviders` (`claude-code` by default), since that provider cannot tell a shutdown from a stop by hand and does not resume them.
+
 ## [0.1.0]
 
 ### Added
