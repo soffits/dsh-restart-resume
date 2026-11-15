@@ -1,5 +1,6 @@
 /**
- * The boot scan: find the sessions whose last turn DSH's own shutdown cut off, and continue them.
+ * The boot scan: find the sessions whose last turn DSH's own shutdown cut off, or whose background
+ * jobs it killed while they waited on them, and continue them.
  *
  * Roots get a follow-up message in their own session (and an active goal is armed again, since DSH
  * disarms goals when it loads a session). Subagents cannot be resumed that way (DSH answers
@@ -19,6 +20,32 @@ export const CHILD_TEXT = '[Restart Resume] DSH restarted while you were working
 	+ 'Continue your task from where it stopped and report to your parent as before. A tool call that was cut off '
 	+ 'may or may not have taken effect: check its effects before running it again.';
 
+/** The notice for background jobs the restart killed, which will never report back. */
+export function jobsText(jobs, child) {
+	const list = jobs.map((job) => `${job.id} (${job.label || 'no label'})`).join('; ');
+	const one = jobs.length === 1;
+	return `[Restart Resume] DSH restarted while ${one ? 'a background job' : 'background jobs'} of ${child ? 'yours' : 'this session'} `
+		+ `${one ? 'was' : 'were'} running, and the restart killed ${one ? 'it' : 'them'}: ${list}. `
+		+ `${one ? 'It' : 'They'} will not report back. Check what ${one ? 'it was' : 'each was'} doing or waiting for, `
+		+ `and start again what still matters${child ? ', then report to your parent as before' : ''}.`;
+}
+
+/** The texts of one session's notice: the cut turn, the jobs it lost, or both. */
+export function noticeTexts(item) {
+	const texts = [];
+	if (item.cut) texts.push(item.child ? CHILD_TEXT : ROOT_TEXT);
+	if (item.jobs?.length) texts.push(jobsText(item.jobs, item.child));
+	return texts;
+}
+
+/** What happened to a session, for the decision log. */
+function what(item) {
+	const parts = [];
+	if (item.cut) parts.push(`turn ${item.cut.turn} ended ${item.cut.kind}`);
+	if (item.jobs?.length) parts.push(`lost job(s) ${item.jobs.map((job) => job.id).join(', ')}`);
+	return parts.join('; ');
+}
+
 /** The line a parent gets about the children continued through it. */
 export function childrenText(ids) {
 	const one = ids.length === 1;
@@ -36,9 +63,12 @@ export async function scan(deps) {
 	const { config, log } = deps;
 	const now = deps.now();
 	const maxAgeMs = config.maxAgeMinutes * 60_000;
+	// A session waiting on a long background job last wrote when it started it, so the window for
+	// lost jobs is the longer one.
+	const listAgeMs = Math.max(maxAgeMs, (config.jobMaxAgeHours ?? 24) * 3_600_000);
 	// Not filtered on `blank`: DSH reports a cold subagent whose turn never finished as blank.
 	const listed = await deps.listSessions();
-	const summaries = listed.filter((s) => !s.running && now - (s.updatedAt ?? 0) <= maxAgeMs + 5 * 60_000);
+	const summaries = listed.filter((s) => !s.running && now - (s.updatedAt ?? 0) <= listAgeMs + 5 * 60_000);
 	const stop = deps.previousStop === undefined ? 'unknown' : new Date(deps.previousStop).toISOString();
 	await log(`scan: ${summaries.length} of ${listed.length} sessions changed recently; previous DSH stop ${stop}`);
 	const archived = deps.archived();
@@ -60,13 +90,16 @@ export async function scan(deps) {
 			maxAgeMs,
 			skipProviders: config.skipProviders,
 			maxResumes: config.maxResumes,
+			bootTime: deps.bootTime ?? now,
+			previousStop: deps.previousStop,
+			previousStart: deps.previousStart,
 		});
 		if (!verdict.resume) {
 			if (verdict.why !== 'no cut turn at the tail' && !verdict.why.startsWith('last turn ended completed'))
 				await log(`skip ${id}: ${verdict.why}`);
 			continue;
 		}
-		if (verdict.child && verdict.cut.kind === 'parent') {
+		if (verdict.child && verdict.cut?.kind === 'parent') {
 			let parent;
 			try {
 				parent = await deps.readSession(verdict.parentId);
@@ -120,14 +153,15 @@ async function resumeRoot(deps, item, children) {
 	const { log } = deps;
 	try {
 		const agent = await agentOf(deps, item.id);
-		const message = notice(deps, children ? [ROOT_TEXT, childrenText(children)] : [ROOT_TEXT]);
+		const texts = noticeTexts(item);
+		const message = notice(deps, children ? [...texts, childrenText(children)] : texts);
 		// A turn may have started meanwhile: a child continued a moment ago that already reported
 		// back. That turn still needs to know its own task was cut, so the notice joins it.
 		const running = agent.status === 'running';
 		if (running) agent.steer(message);
 		else agent.followup(message);
 		if (deps.flush && !(await deps.flush(agent.session))) throw new Error('the session log did not take the notice');
-		await log(`resumed ${item.id}${running ? ' (into its running turn)' : ''} (turn ${item.cut.turn} ended ${item.cut.kind})${children ? `, told of ${children.join(', ')}` : ''}`);
+		await log(`resumed ${item.id}${running ? ' (into its running turn)' : ''} (${what(item)})${children ? `, told of ${children.join(', ')}` : ''}`);
 		rearmGoal(deps, agent, item.id);
 		return true;
 	} catch (error) {
@@ -144,8 +178,9 @@ async function resumeChild(deps, item) {
 	}
 	try {
 		const parent = await agentOf(deps, item.parentId);
-		await deps.subagents.sendMessage(parent, item.id, [{ type: 'text', text: CHILD_TEXT }], { signal: AbortSignal.timeout(30_000) });
-		await log(`resumed ${item.id} through parent ${item.parentId} (turn ${item.cut.turn} ended ${item.cut.kind})`);
+		const content = noticeTexts(item).map((text) => ({ type: 'text', text }));
+		await deps.subagents.sendMessage(parent, item.id, content, { signal: AbortSignal.timeout(30_000) });
+		await log(`resumed ${item.id} through parent ${item.parentId} (${what(item)})`);
 		return true;
 	} catch (error) {
 		await log(`resume ${item.id} through parent ${item.parentId} failed: ${String(error)}`);

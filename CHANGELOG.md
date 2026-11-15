@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.2.0]
+
+### Added
+
+- Sessions that were waiting on background jobs the restart killed are continued too, with a message naming each lost job, even when their last turn had ended normally, on every provider; subagents through their parent as before. A job counts as lost when it was registered before the new process started and never settled, or settled by DSH's teardown at the recorded stop. New setting `jobMaxAgeHours` (24): how far back a session's last write may lie for this check, since a long wait writes nothing while it runs.
+
 ## [0.1.1]
 
 ### Fixed

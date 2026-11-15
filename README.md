@@ -2,13 +2,15 @@
 
 A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that continues the turns a DSH restart cut off, subagents included. Without it, every session that was working when DSH stopped sits there until someone types "continue", and a subagent cut off mid-task never comes back at all.
 
-It adds no tools and no UI. Shortly after DSH starts (60 seconds by default, so other plugins resume their own sessions first) it looks once at the sessions that changed in the last two hours and continues the ones whose last turn was cut off by DSH going away:
+It adds no tools and no UI. Shortly after DSH starts (60 seconds by default, so other plugins resume their own sessions first) it looks once at the sessions that changed recently and continues the ones whose last turn was cut off by DSH going away, or whose background jobs it killed:
 
 - **Root sessions** get a follow-up message in their own session saying the turn was cut off, asking the model to continue and to check the effects of a cut-off tool call before running it again. An active goal, which DSH disarms when it loads a session, is armed again.
 - **Subagents** can't be resumed that way: DSH refuses to load one on its own ("owned by subagent routing"). Each gets its message from its parent instead (`subagents.sendMessage`), which brings the child back on its own model and preset. It then reports to its parent when it finishes, as it would have.
 - A parent continued at the same time is told in its own message which of its subagents were continued, so it waits for their results instead of sending them the task again. A parent that is already running (another plugin resumed it) gets the same line in its running turn.
 
-A turn counts as cut off when it ended `interrupted` (DSH died) or `aborted` with cause `disposed` (DSH stopped), and no turn has started in the session since. A subagent whose turn ended with cause `parent` is continued only when DSH's stop did that: its parent's turn was cut off by the same shutdown, or its parent was idle and the cut lies at the moment the previous DSH process stopped (the plugin notes that moment as DSH stops). A parent stopped by hand also stops its children, and those stay stopped.
+- **Sessions that were waiting on background jobs** the restart killed get a message too, even when their last turn had ended normally. DSH keeps its jobs in the process, so a restart kills every running one (an `until` loop waiting for CI, a `gh run watch`, a long build) and its report never comes; a session that ended its turn waiting for that report would otherwise wait forever. The message names each lost job and asks the model to check what it was doing and start again what still matters. This holds on every provider, `skipProviders` included, since nothing else resumes a session that wasn't mid-turn.
+
+A turn counts as cut off when it ended `interrupted` (DSH died) or `aborted` with cause `disposed` (DSH stopped), and no turn has started in the session since. A job counts as killed by the restart when it was registered before the new process started and never settled, or settled by DSH's teardown at the moment the previous process stopped. A subagent whose turn ended with cause `parent` is continued only when DSH's stop did that: its parent's turn was cut off by the same shutdown, or its parent was idle and the cut lies at the moment the previous DSH process stopped (the plugin notes that moment as DSH stops). A parent stopped by hand also stops its children, and those stay stopped.
 
 Left alone on purpose:
 
@@ -39,6 +41,7 @@ The bundle adds one host row, `restart-resume`. It takes effect at the next DSH 
 | `maxResumes` | `3` | A session cut off again this many times in a row right after a resume is left alone. |
 | `skipProviders` | `[claude-code]` | Providers whose sessions another plugin resumes. |
 | `resumeGoals` | `true` | Arm a resumed session's active goal again. |
+| `jobMaxAgeHours` | `24` | A session that last wrote longer ago than this is not checked for killed jobs (a long wait writes nothing while it runs). |
 
 For example, in a profile patch:
 
@@ -50,7 +53,7 @@ For example, in a profile patch:
 
 ## Limits
 
-A subagent whose parent is itself a subagent can only be reached through a session DSH won't load directly, so it is not resumed. A tool call that was halfway through when DSH stopped may have had side effects; the message asks the model to check, but the plugin can't know. External subagents (ACP agents, Claude Code's own `Agent` tool) have no DSH session to continue.
+A subagent whose parent is itself a subagent can only be reached through a session DSH won't load directly, so it is not resumed. A tool call that was halfway through when DSH stopped may have had side effects; the message asks the model to check, but the plugin can't know. External subagents (ACP agents, Claude Code's own `Agent` tool) have no DSH session to continue. A subagent's background jobs end with its turn in DSH (the subagent service closes an idle child and disposes its jobs), so a child that ended its turn to wait for one is not woken by it, restart or not; that is DSH's behaviour, not a restart, and this plugin leaves it alone.
 
 ## Credits
 
