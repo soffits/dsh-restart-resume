@@ -67,6 +67,9 @@ function fakeDsh(sessions, options = {}) {
 	return { deps, calls };
 }
 
+/** The sessions a scan continued itself. */
+const continued = (r) => ({ roots: r.roots, children: r.children });
+
 const session = (name, header, provider) => {
 	const f = fixture(name);
 	const events = provider
@@ -84,7 +87,7 @@ test('children go through their parent first; a resumed parent is told of them i
 		{ goals: { R: { id: 'g1', revision: 4, phase: 'active', activation: 'disarmed', roundsStarted: 2, maxGoalRounds: 10 } } },
 	);
 	const result = await scan(deps);
-	assert.deepEqual(result, { roots: ['R'], children: ['C'] });
+	assert.deepEqual(continued(result), { roots: ['R'], children: ['C'] });
 	const acts = calls.filter((c) => c[0] !== 'log');
 	assert.deepEqual(acts, [
 		['resolve', 'R'],
@@ -103,7 +106,7 @@ test('a child whose parent is already running again is continued, and the runnin
 		{ running: ['P'] },
 	);
 	const result = await scan(deps);
-	assert.deepEqual(result, { roots: [], children: ['C'] });
+	assert.deepEqual(continued(result), { roots: [], children: ['C'] });
 	assert.deepEqual(
 		calls.filter((c) => c[0] === 'send' || c[0] === 'steer'),
 		[
@@ -118,18 +121,50 @@ test('a child cut because its parent was stopped by hand stays stopped', async (
 		P: { header: {}, events: fixture('parent-running').events },
 		C: session('child-parent-other', { origin: 'subagent', parentSession: 'P' }),
 	});
-	assert.deepEqual(await scan(deps), { roots: [], children: [] });
+	assert.deepEqual(continued(await scan(deps)), { roots: [], children: [] });
 	assert.ok(calls.some((c) => c[0] === 'log' && c[1].includes('its parent was stopped, not shut down')));
 });
 
-test('a child cut with its shut-down parent is continued; the scheduled parent is left to its scheduler', async () => {
+test('a child cut with its shut-down parent is continued; the scheduled parent goes to its scheduler', async () => {
 	const { deps, calls } = fakeDsh({
 		P: session('root-scheduled-disposed'),
 		C: session('child-parent-shutdown', { origin: 'subagent', parentSession: 'P' }),
 	});
-	assert.deepEqual(await scan(deps), { roots: [], children: ['C'] });
+	const handed = [];
+	deps.claims = new Map([['cron-job', async (turn) => {
+		handed.push([turn.sessionId, turn.principal.id, turn.cut.kind]);
+		return { continued: true };
+	}]]);
+	const result = await scan(deps);
+	assert.deepEqual(continued(result), { roots: [], children: ['C'] });
+	assert.deepEqual(result.claimed, ['P']);
+	assert.deepEqual(handed, [['P', 'job-1', 'disposed']]);
 	assert.deepEqual(calls.filter((c) => c[0] === 'send'), [['send', 'P', 'C', [CHILD_TEXT]]]);
-	assert.ok(!calls.some((c) => c[0] === 'steer'), 'an idle parent hears from its child, not from us');
+	assert.ok(!calls.some((c) => c[0] === 'followup' || c[0] === 'steer'), 'the scheduler continues its run; no notice from here');
+});
+
+test('a scheduled run nobody claims gets a notice like any root; a refused one is recorded', async () => {
+	const { deps, calls } = fakeDsh({ P: session('root-scheduled-disposed') });
+	assert.deepEqual(continued(await scan(deps)), { roots: ['P'], children: [] });
+	assert.ok(calls.some((c) => c[0] === 'followup' && c[1] === 'P'));
+
+	const again = fakeDsh({ P: session('root-scheduled-disposed') });
+	again.deps.claims = new Map([['cron-job', async () => ({ continued: false, why: 'the next run is due soon' })]]);
+	const result = await scan(again.deps);
+	assert.deepEqual(result.claimed, []);
+	assert.deepEqual(result.skipped, [{ id: 'P', why: 'its cron-job owner did not continue it: the next run is due soon' }]);
+	assert.ok(!again.calls.some((c) => c[0] === 'followup'));
+});
+
+test('sessions that last wrote before the previous process started are not read', async () => {
+	const { deps, calls } = fakeDsh({ R: session('root-claude-disposed') });
+	const read = [];
+	const readSession = deps.readSession;
+	deps.readSession = async (id) => (read.push(id), readSession(id));
+	deps.previousStart = deps.now() + 3_600_000;
+	assert.deepEqual(continued(await scan(deps)), { roots: [], children: [] });
+	assert.deepEqual(read, []);
+	assert.equal(calls.filter((c) => c[0] !== 'log').length, 0);
 });
 
 test('archived roots, running sessions and stopped turns are left alone', async () => {
@@ -141,7 +176,7 @@ test('archived roots, running sessions and stopped turns are left alone', async 
 		},
 		{ archived: ['A'] },
 	);
-	assert.deepEqual(await scan(deps), { roots: [], children: [] });
+	assert.deepEqual(continued(await scan(deps)), { roots: [], children: [] });
 	assert.equal(calls.filter((c) => c[0] !== 'log').length, 0);
 });
 

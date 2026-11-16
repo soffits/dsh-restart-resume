@@ -1,5 +1,5 @@
 /** The plugin's own files: a log of every decision a scan made, and when DSH last stopped. */
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { appendFile, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -46,4 +46,17 @@ export function previousRun(dir) {
 	} catch {
 		return { stop: undefined, start: undefined };
 	}
+}
+
+/**
+ * Write what this process's scan did to `last-scan.json` in `dir`, atomically, so a check after a
+ * restart reads the outcome instead of guessing from timing. It never throws.
+ */
+export function writeScanRecord(dir, record) {
+	try {
+		mkdirSync(dir, { recursive: true });
+		const tmp = `${dir}/last-scan.json.${process.pid}.tmp`;
+		writeFileSync(tmp, JSON.stringify(record, null, '\t'));
+		renameSync(tmp, `${dir}/last-scan.json`);
+	} catch {}
 }

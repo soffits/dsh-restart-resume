@@ -7,7 +7,7 @@
 import z from '@deepseek-ai/schemastery';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import { scan } from './src/resume.js';
-import { decisionLog, previousRun, recordStop, stateDir } from './src/state.js';
+import { decisionLog, previousRun, recordStop, stateDir, writeScanRecord } from './src/state.js';
 
 export const name = 'dsh-restart-resume';
 export const inject = ['sessionController', 'sessionQuery', 'agents', 'sessions'];
@@ -33,9 +33,26 @@ const PREVIOUS_STOP = Symbol.for('dsh-restart-resume.previous-stop');
 /** Applied later than this after DSH started, the plugin was installed or enabled into a running
  *  DSH: there is no restart to recover from. */
 const BOOT_WINDOW_S = 300;
+/** Handlers of the plugins that continue the cut turns they started themselves, by the principal
+ *  kind they put on their prompts. Kept on globalThis: a config edit applies the row again while
+ *  claimers keep the registration they made. */
+const CLAIMS = Symbol.for('dsh-restart-resume.claims');
 
 export function apply(ctx, config) {
 	if (!config.enabled) return;
+	const claims = (globalThis[CLAIMS] ??= new Map());
+	// `restartResume.claim(kind, handler)`: a plugin that starts turns under a principal of `kind`
+	// (a scheduler) continues those itself when a restart cut them; the scan hands each such turn to
+	// `handler({ sessionId, principal, cut, jobs })`, which answers `{ continued, why? }`. The return
+	// value drops the claim; claim from a scope that ends with the claimer.
+	ctx.provide?.('restartResume', {
+		claim(kind, handler) {
+			claims.set(kind, handler);
+			return () => {
+				if (claims.get(kind) === handler) claims.delete(kind);
+			};
+		},
+	});
 	const dir = stateDir();
 	if (!(PREVIOUS_STOP in globalThis)) globalThis[PREVIOUS_STOP] = previousRun(dir);
 	const bootTime = Date.now() - process.uptime() * 1000;
@@ -51,6 +68,7 @@ export function apply(ctx, config) {
 	const run = async () => {
 		if (globalThis[SCANNED]) return;
 		globalThis[SCANNED] = true;
+		const startedAt = Date.now();
 		const result = await scan({
 			config,
 			log,
@@ -71,8 +89,11 @@ export function apply(ctx, config) {
 			goals: ctx.get('goals'),
 			createUserMessage,
 			flush: (session) => ctx.sessions.flush(session),
+			claims,
 		});
-		await log(`scan done: ${result.roots.length} root(s), ${result.children.length} subagent(s) continued`);
+		const iso = (ms) => new Date(ms).toISOString();
+		writeScanRecord(dir, { boot: iso(bootTime), startedAt: iso(startedAt), doneAt: iso(Date.now()), ...result });
+		await log(`scan done: ${result.roots.length} root(s), ${result.children.length} subagent(s) continued, ${result.claimed.length} handed to their owner`);
 	};
 	ctx.effect(() => {
 		const timer = setTimeout(() => {

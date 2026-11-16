@@ -78,7 +78,8 @@ test('the scan wakes an idle root and a subagent (through its parent) that lost 
 		createUserMessage: ({ content, source }) => ({ content, source }),
 		flush: async () => true,
 	};
-	assert.deepEqual(await scan(deps), { roots: ['R'], children: ['C'] });
+	const result = await scan(deps);
+	assert.deepEqual({ roots: result.roots, children: result.children }, { roots: ['R'], children: ['C'] });
 	const jobs = [{ id: 'bash-wait', label: 'until out=$(bash gate.sh) && [ "${out#eval}" != "$out" ]; do sleep 240; done; echo "$out"' }];
 	assert.deepEqual(calls.filter((c) => c[0] !== 'log'), [
 		['send', 'P', 'C', [jobsText(jobs, true)]],
@@ -100,13 +101,13 @@ test('a job lost by an earlier restart is not lost again by the next one', () =>
 	assert.equal(lostJobs(idleWaiting, BOOT, STOP, T - 60_000).length, 1, 'registered in the previous process: lost');
 });
 
-test('a tool call cut with its turn is the cut turn, and jobs older than an earlier cut are gone', () => {
+test('a job killed inside the cut turn is named, and jobs older than an earlier cut are gone', () => {
 	const cutTurn = [
 		{ type: 'turn/start', seq: 1, time: T, data: { turn: 1 } },
 		registered('bash-fg', T + 100, 'sleep 600'),
 		{ type: 'turn/end', seq: 2, time: T + 101, data: { turn: 1, reason: { kind: 'interrupted' } } },
 	];
-	assert.deepEqual(lostJobs(cutTurn, BOOT, STOP), []);
+	assert.deepEqual(lostJobs(cutTurn, BOOT, STOP).map((j) => j.id), ['bash-fg'], 'the cut call\'s job never reports');
 	const waitThenCut = [...idleWaiting,
 		{ type: 'turn/start', seq: 3, time: T + 30_000, data: { turn: 2 } },
 		{ type: 'turn/end', seq: 4, time: STOP, data: { turn: 2, reason: { kind: 'aborted', reason: { kind: 'disposed' } } } }];

@@ -30,9 +30,11 @@ test('a subagent cut while DSH ran its tool call is resumed, whatever its provid
 	assert.equal(verdict.cut.kind, 'interrupted');
 });
 
-test('a scheduled run is left to its scheduler', () => {
+test('a cut scheduled run names the job that started it', () => {
 	const verdict = judge(fixture('root-scheduled-disposed'));
-	assert.deepEqual(verdict, { resume: false, why: 'a scheduled run, which its scheduler reruns' });
+	assert.equal(verdict.resume, true);
+	assert.deepEqual(verdict.principal, { kind: 'cron-job', channel: 'cron', id: 'job-1', name: 'Job', trigger: 'schedule' });
+	assert.equal(judge(fixture('root-claude-disposed')).principal, undefined, 'a person\'s turn names nobody');
 });
 
 test('a subagent cut by a hard death or a graceful stop is resumed through its parent', () => {
