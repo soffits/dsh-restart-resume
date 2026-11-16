@@ -35,7 +35,7 @@ ctx.inject(['restartResume'], (sub) => {
 
 Background jobs the restart killed are named in the notice, also the ones the cut turn itself was waiting on, so the model starts them again instead of waiting on a report that never comes.
 
-Only sessions that wrote while the previous DSH process ran are read (what that process cut or killed, it wrote to), so the scan takes seconds. When it is done it writes `last-scan.json` next to `resume.log`: `boot`, `startedAt`, `doneAt`, and the session ids it continued (`roots`, `children`), handed to their owner (`claimed`), and left alone with a reason (`skipped`, `{ id, why }`). A check after a restart reads that record rather than racing the scan.
+The scan reads the logs of the sessions DSH lists as created or prompted within `jobMaxAgeHours`, several at a time. When it is done it writes `last-scan.json` next to `resume.log`: `boot`, `startedAt`, `doneAt`, and the session ids it continued (`roots`, `children`), handed to their owner (`claimed`), and left alone with a reason (`skipped`, `{ id, why }`). A check after a restart reads that record rather than racing the scan.
 
 Every decision is written to `resume.log` in `~/.local/state/dsh-restart-resume` (or `$XDG_STATE_HOME/dsh-restart-resume`, or `DSH_RESTART_RESUME_STATE_DIR`), next to `stopped.json`, the time DSH last stopped.
 

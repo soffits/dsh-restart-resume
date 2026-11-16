@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.4.1]
+
+### Fixed
+
+- 0.4.0 read only sessions whose listed `updatedAt` fell after the previous process started, but DSH lists a session's creation or last prompt there, not its last write: subagents working for longer than the previous process were never read and not continued. The window is back to `jobMaxAgeHours`; logs are read eight at a time.
+
 ## [0.4.0]
 
 ### Added
