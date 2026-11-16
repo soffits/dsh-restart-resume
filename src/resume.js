@@ -14,11 +14,13 @@ import { assess, NOTICE_KIND, parentShutDown } from './detect.js';
 
 export const ROOT_TEXT = '[Restart Resume] DSH restarted while this turn was running, and the turn was cut off. '
 	+ 'Continue the task from where it stopped. A tool call that was cut off may or may not have taken effect: '
-	+ 'check its effects before running it again.';
+	+ 'check its effects before running it again. Tool calls that failed while DSH was down (a tool server not '
+	+ 'connected, a connection refused) work again now.';
 
 export const CHILD_TEXT = '[Restart Resume] DSH restarted while you were working, and your turn was cut off. '
 	+ 'Continue your task from where it stopped and report to your parent as before. A tool call that was cut off '
-	+ 'may or may not have taken effect: check its effects before running it again.';
+	+ 'may or may not have taken effect: check its effects before running it again. Tool calls that failed while '
+	+ 'DSH was down (a tool server not connected, a connection refused) work again now.';
 
 /** The notice for background jobs the restart killed, which will never report back. */
 export function jobsText(jobs, child) {
@@ -88,7 +90,6 @@ export async function scan(deps) {
 			events: snapshot.events,
 			now,
 			maxAgeMs,
-			skipProviders: config.skipProviders,
 			maxResumes: config.maxResumes,
 			bootTime: deps.bootTime ?? now,
 			previousStop: deps.previousStop,
@@ -172,6 +173,12 @@ async function resumeRoot(deps, item, children) {
 
 async function resumeChild(deps, item) {
 	const { log } = deps;
+	// Someone continued it since the scan read its log (its parent, or a person): a notice now
+	// would land in that turn as stale news.
+	if (deps.liveAgent(item.id)?.status === 'running') {
+		await log(`skip ${item.id}: a turn already runs`);
+		return false;
+	}
 	if (deps.subagents === undefined) {
 		await log(`skip ${item.id}: no subagent service to reach it through`);
 		return false;

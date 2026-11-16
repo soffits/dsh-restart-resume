@@ -50,15 +50,6 @@ export function lastCut(events) {
 /** Whether a cut of this kind is DSH going away rather than someone stopping the turn. */
 export const shutdownCut = (kind) => kind === 'interrupted' || kind === 'disposed';
 
-/** The provider the session's last model request went to, or undefined before any request. */
-export function lastProvider(events) {
-	for (let i = events.length - 1; i >= 0; i -= 1) {
-		const event = events[i];
-		if (event.type === 'request/header') return event.data?.header?.config?.provider;
-	}
-	return undefined;
-}
-
 /** The index of the `turn/start` that opened the turn ending at `endIndex`. */
 function turnStartBefore(events, endIndex) {
 	for (let i = endIndex - 1; i >= 0; i -= 1) if (events[i].type === 'turn/start') return i;
@@ -189,7 +180,6 @@ function noticeWaiting(events) {
  * @param {readonly object[]} input.events
  * @param {number} input.now - epoch ms.
  * @param {number} input.maxAgeMs - a cut older than this is left alone.
- * @param {readonly string[]} input.skipProviders - providers whose sessions another plugin resumes.
  * @param {number} input.maxResumes - consecutive resumes after which a session is left alone.
  * @param {number} [input.bootTime] - epoch ms this DSH process started.
  * @param {number} [input.previousStop] - epoch ms the previous process stopped, if known.
@@ -197,7 +187,7 @@ function noticeWaiting(events) {
  * @returns {{ resume: false, why: string } | { resume: true, child: boolean, parentId?: string, cut?: object,
  *   jobs: { id: string, label: string }[] }} `cut` is absent when only background jobs were lost.
  */
-export function assess({ header, events, now, maxAgeMs, skipProviders, maxResumes, bootTime = now, previousStop, previousStart }) {
+export function assess({ header, events, now, maxAgeMs, maxResumes, bootTime = now, previousStop, previousStart }) {
 	const child = header.origin === 'subagent' && Boolean(header.parentSession);
 	const jobs = lostJobs(events, bootTime, previousStop, previousStart);
 	const cut = lastCut(events);
@@ -212,12 +202,6 @@ export function assess({ header, events, now, maxAgeMs, skipProviders, maxResume
 	}
 	if (now - cut.time > maxAgeMs) return { resume: false, why: 'cut too long ago' };
 	if (cut.waiting.includes(NOTICE_KIND)) return { resume: false, why: 'a resume notice is already waiting' };
-	// A subagent cut because its parent's turn was cut is ours on every provider: the provider only
-	// sees the child's turn aborted by its parent, the same as when someone stops the parent, so it
-	// cannot know a shutdown did it. Its parent's log can (see parentShutDown).
-	const provider = lastProvider(events);
-	if (provider !== undefined && skipProviders.includes(provider) && !(child && cut.kind === 'parent'))
-		return { resume: false, why: `on ${provider}, which resumes its own sessions` };
 	if (turnSources(events, cut.index).includes('schedule'))
 		return { resume: false, why: 'a scheduled run, which its scheduler reruns' };
 	if (resumeStreak(events) >= maxResumes)
