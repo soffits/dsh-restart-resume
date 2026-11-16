@@ -1,0 +1,23 @@
+{"id":"child-tool-cut","header":{"origin": "subagent", "parentSession": "parent"},"events":[
+{"type": "agent/inbox/spliced", "seq": 6, "time": 1794850732021, "data": {"target": "next-turn", "inserted": [{"source": {"kind": "user"}}]}},
+{"type": "turn/start", "seq": 7, "time": 1794850732022, "data": {"turn": 1}},
+{"type": "agent/inbox/spliced", "seq": 8, "time": 1794850732022, "data": {"target": "next-turn", "inserted": []}},
+{"type": "step/start", "seq": 9, "time": 1794850732127, "data": {"turn": 1, "step": 1}},
+{"type": "request/header", "seq": 12, "time": 1794850732130, "data": {"header": {"config": {"provider": "claude-code"}}}},
+{"type": "tool/result", "seq": 1361, "time": 1794853734151, "data": {"turn": 1, "step": 189, "message": {"role": "tool", "id": "result", "content": [{"type": "text", "text": "(result)"}]}}},
+{"type": "step/end", "seq": 1362, "time": 1794853734152, "data": {"turn": 1, "step": 189}},
+{"type": "step/start", "seq": 1363, "time": 1794853734169, "data": {"turn": 1, "step": 190}},
+{"type": "assistant/message", "seq": 1364, "time": 1794853741798, "data": {"turn": 1, "step": 190, "message": {"role": "assistant", "content": [{"type": "text", "text": "(text)"}]}}},
+{"type": "tool/call", "seq": 1365, "time": 1794853741799, "data": {"turn": 1, "step": 190, "callId": "call-1365", "name": "bash"}},
+{"type": "job/registered", "seq": 1366, "time": 1794853741819, "data": {"jobId": "job-1", "startedAt": 1794853741819, "label": "bash"}},
+{"type": "job/settled", "seq": 1367, "time": 1794853745106, "data": {"jobId": "job-1", "cause": "producer", "status": "completed", "startedAt": 1794853741819, "finishedAt": 1794853745106, "label": "bash"}},
+{"type": "tool/result", "seq": 1368, "time": 1794853745107, "data": {"turn": 1, "step": 190, "message": {"role": "tool", "id": "result", "content": [{"type": "text", "text": "(result)"}]}}},
+{"type": "step/end", "seq": 1369, "time": 1794853745108, "data": {"turn": 1, "step": 190}},
+{"type": "step/start", "seq": 1370, "time": 1794853745121, "data": {"turn": 1, "step": 191}},
+{"type": "assistant/message", "seq": 1371, "time": 1794853747705, "data": {"turn": 1, "step": 191, "message": {"role": "assistant", "content": [{"type": "text", "text": "(text)"}]}}},
+{"type": "tool/call", "seq": 1372, "time": 1794853747706, "data": {"turn": 1, "step": 191, "callId": "call-1372", "name": "bash"}},
+{"type": "job/registered", "seq": 1373, "time": 1794853747727, "data": {"jobId": "job-2", "startedAt": 1794853747727, "label": "bash"}},
+{"type": "tool/result", "seq": 1374, "time": 1794853747727, "data": {"turn": 1, "step": 191, "message": {"role": "tool", "id": "interrupted-tool-result", "content": [{"type": "text", "text": "(result)"}]}}},
+{"type": "step/end", "seq": 1375, "time": 1794853747727, "data": {"turn": 1, "step": 191}},
+{"type": "turn/end", "seq": 1376, "time": 1794853747727, "data": {"turn": 1, "reason": {"kind": "interrupted"}}}
+]}

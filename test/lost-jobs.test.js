@@ -25,7 +25,7 @@ const turn = (start, end, kind = 'completed') => [
 ];
 const WAIT = 'until out=$(bash gate.sh) && [ "${out#eval}" != "$out" ]; do sleep 240; done;\n echo "$out"';
 const idleWaiting = [...turn(T - 5_000, T + 20_000), registered('bash-wait', T, WAIT)];
-const base = { now: NOW, maxAgeMs: 120 * 60_000, skipProviders: ['claude-code'], maxResumes: 3, bootTime: BOOT, previousStop: STOP };
+const base = { now: NOW, maxAgeMs: 120 * 60_000, maxResumes: 3, bootTime: BOOT, previousStop: STOP };
 
 test('a job registered before this process started and never settled was killed by the stop', () => {
 	assert.deepEqual(lostJobs(idleWaiting, BOOT, STOP), [{ id: 'bash-wait', label: 'until out=$(bash gate.sh) && [ "${out#eval}" != "$out" ]; do sleep 240; done; echo "$out"' }]);
@@ -63,7 +63,7 @@ test('the scan wakes an idle root and a subagent (through its parent) that lost 
 	};
 	const agent = (id) => ({ id, session: { id }, status: 'idle', followup: (m) => calls.push(['followup', id, m.content.map((b) => b.text)]), steer: () => {} });
 	const deps = {
-		config: { maxAgeMinutes: 120, maxResumes: 3, skipProviders: ['claude-code'], resumeGoals: false, jobMaxAgeHours: 24 },
+		config: { maxAgeMinutes: 120, maxResumes: 3, resumeGoals: false, jobMaxAgeHours: 24 },
 		log: async (line) => calls.push(['log', line]),
 		now: () => NOW,
 		bootTime: BOOT,
@@ -111,7 +111,7 @@ test('a tool call cut with its turn is the cut turn, and jobs older than an earl
 		{ type: 'turn/start', seq: 3, time: T + 30_000, data: { turn: 2 } },
 		{ type: 'turn/end', seq: 4, time: STOP, data: { turn: 2, reason: { kind: 'aborted', reason: { kind: 'disposed' } } } }];
 	assert.deepEqual(lostJobs(waitThenCut, BOOT, STOP).map((j) => j.id), ['bash-wait'], 'a wait started before the cut turn is lost too');
-	const verdict = assess({ header: {}, events: waitThenCut, ...base, skipProviders: [] });
+	const verdict = assess({ header: {}, events: waitThenCut, ...base });
 	assert.ok(verdict.cut && verdict.jobs.length === 1);
 	const resumedSince = [...cutTurn, ...turn(T + 200, T + 300)];
 	assert.deepEqual(lostJobs(resumedSince, BOOT + 3_600_000, STOP + 3_600_000), [], 'the cut was an earlier stop');
