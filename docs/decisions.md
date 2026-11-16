@@ -3,7 +3,9 @@
 ## Scope
 
 - **Own plugin, not an existing one.** Compared dsh-neverdie, dsh-continue (anthony1x6000), dsh-auto-continue, dsh-boot-resume, dsh-autocontinue, dsh-recovery-resume and both dsh-resume plugins: none resumes subagents through their parent, several miss the graceful-stop shape (`aborted`/`disposed`), and the larger ones also take over error recovery that a fallback plugin owns. neverdie's tail walk and goal re-arm are the right core and MIT, so they are reused with credit.
-- **Scheduled runs are skipped**: the scheduler that started a run owns rerunning it, and only it knows whether a later run already replaced it.
+- **Turns a plugin started go back to it, by claim.** A scheduler delivers its run's answer and knows whether a later run replaced it, so it keeps the rerun policy; this plugin keeps the finding, from the log. The prompt's `source.principal.kind` says who started a turn; a plugin claims a kind through the `restartResume` service (`ctx.provide`), and the claimer injects only that claim, so neither plugin needs the other to run. Unclaimed principals get the ordinary notice.
+- **The scan reads only sessions that wrote while the previous process ran** (`previousStart` minus a minute): a cut turn or a killed job of that process was written then. Reading every session changed in the last 24 h took 90 s for ~280 sessions, longer than the after-restart check waited.
+- **`last-scan.json` records each scan's outcome**, so a check after a restart reads what was continued, handed over or skipped instead of guessing from timing.
 
 - **One resumer for every provider.** Each provider plugin that resumed its own sessions saw only its model stream: dsh-oh-my-claude marked a session busy per stream, so a turn cut while DSH ran one of its tools was continued by nobody (three claude-code children in one restart). DSH's log records every cut, so this plugin continues all of them, and a provider plugin only reattaches its process (oh-my-claude `resumeAfterRestart: false`). Same shape as durable-execution systems: one recovery owner reading the journal.
 - **A short start delay (10 s)**, only for DSH to load sessions and agents; there is no other resumer to wait for.
@@ -16,6 +18,7 @@
 - **Crash-loop guard per session, not per boot**: a session whose last three turns were each opened by our notice and cut again is left alone. A boot counter would also block deliberate quick restarts.
 - **A notice still waiting from an earlier start is not stacked** (its source kind is in the inbox splices after the cut).
 
+- **Jobs killed inside the cut turn are named too**: a model told only that its turn was cut kept waiting on `job_output` for a job that died with DSH.
 - **Killed background jobs count as cut work.** A session that ended its turn waiting for a job's report is as stuck after a restart as one cut mid-turn, and no provider plugin wakes it, so these are continued on every provider. Lost means registered before this process started and never settled (DSH's job registry lives in the process; real logs after a graceful restart show no settlement), or settled by teardown within 2 minutes of the recorded stop. A teardown at any other time is DSH disposing the owner (a subagent going idle, an archive), not a restart, and is left alone.
 - **Wider listing window for killed jobs** (`jobMaxAgeHours`, 24 h): a session waiting on a long job last wrote when it started it.
 

@@ -72,6 +72,19 @@ export function turnSources(events, endIndex) {
 	return kinds;
 }
 
+/** Who sent the message that started the turn ending at `endIndex` (`source.principal`: a
+ *  scheduler names its job there), or undefined. */
+export function turnPrincipal(events, endIndex) {
+	const start = turnStartBefore(events, endIndex);
+	for (let i = start + 1; i < endIndex; i += 1) {
+		const event = events[i];
+		if (event.type !== 'user/message') continue;
+		const source = event.data?.source;
+		if (source?.kind !== undefined && !CONTEXT_KINDS.has(source.kind)) return source.principal;
+	}
+	return undefined;
+}
+
 /**
  * How many turns in a row, counting back from the last one, were opened by this plugin's notice
  * and cut again. A session that keeps taking DSH down with it stops being resumed at the cap.
@@ -129,8 +142,9 @@ export function lostJobs(events, bootTime, previousStop, previousStart) {
 			if (data.cause === 'teardown' && atStop) killed.push(job);
 		}
 	}
-	// A foreground tool call registers a job too; one cut with its turn belongs to that cut, and the
-	// cut-turn notice covers it. A job older than an earlier cut died with that earlier stop.
+	// Jobs of the cut turn itself are named too, the cut tool call's own included: a model that sees
+	// only "your turn was cut" waits on a job_output that never comes. A job older than an earlier
+	// cut died with that earlier stop.
 	const cuts = cutTurns(events);
 	const tail = lastCut(events);
 	const tailCut = tail !== undefined && cuts.length > 0 && cuts[cuts.length - 1].end === tail.time ? cuts[cuts.length - 1] : undefined;
@@ -138,7 +152,6 @@ export function lostJobs(events, bootTime, previousStop, previousStart) {
 	const ofPreviousProcess = (job) => {
 		const at = job.startedAt ?? 0;
 		if (at >= bootTime || at < olderCut) return false;
-		if (tailCut !== undefined && at >= tailCut.start && at <= tailCut.end) return false;
 		return previousStart === undefined || at >= previousStart;
 	};
 	return [...killed, ...[...open.values()].filter(ofPreviousProcess)]
@@ -185,7 +198,8 @@ function noticeWaiting(events) {
  * @param {number} [input.previousStop] - epoch ms the previous process stopped, if known.
  * @param {number} [input.previousStart] - epoch ms the previous process started, if known.
  * @returns {{ resume: false, why: string } | { resume: true, child: boolean, parentId?: string, cut?: object,
- *   jobs: { id: string, label: string }[] }} `cut` is absent when only background jobs were lost.
+ *   jobs: { id: string, label: string }[], principal?: object }} `cut` is absent when only background jobs
+ *   were lost; `principal` is who started a cut root turn, when it names itself (see turnPrincipal).
  */
 export function assess({ header, events, now, maxAgeMs, maxResumes, bootTime = now, previousStop, previousStart }) {
 	const child = header.origin === 'subagent' && Boolean(header.parentSession);
@@ -202,11 +216,11 @@ export function assess({ header, events, now, maxAgeMs, maxResumes, bootTime = n
 	}
 	if (now - cut.time > maxAgeMs) return { resume: false, why: 'cut too long ago' };
 	if (cut.waiting.includes(NOTICE_KIND)) return { resume: false, why: 'a resume notice is already waiting' };
-	if (turnSources(events, cut.index).includes('schedule'))
-		return { resume: false, why: 'a scheduled run, which its scheduler reruns' };
 	if (resumeStreak(events) >= maxResumes)
 		return { resume: false, why: `already resumed ${maxResumes} times in a row` };
-	return child ? { resume: true, child, parentId: header.parentSession, cut, jobs } : { resume: true, child, cut, jobs };
+	if (child) return { resume: true, child, parentId: header.parentSession, cut, jobs };
+	const principal = turnPrincipal(events, cut.index);
+	return principal === undefined ? { resume: true, child, cut, jobs } : { resume: true, child, cut, jobs, principal };
 }
 
 /** How close a parent's aborted turn must be to its child's `parent` cut to be its cause; DSH
