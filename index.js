@@ -14,13 +14,11 @@ export const inject = ['sessionController', 'sessionQuery', 'agents', 'sessions'
 
 export const Config = z.object({
 	enabled: z.boolean().default(true).description('Scan for cut-off turns after DSH starts.'),
-	delaySeconds: z.natural().max(600).default(60)
-		.description('Seconds after start before the scan, so other plugins resume their own sessions first.'),
+	delaySeconds: z.natural().max(600).default(10)
+		.description('Seconds after start before the scan, so DSH has loaded its sessions and agents.'),
 	maxAgeMinutes: z.natural().min(1).max(1440).default(120).description('A turn cut longer ago than this is left alone.'),
 	maxResumes: z.natural().min(1).max(10).default(3)
 		.description('A session cut off again this many times in a row right after a resume is left alone.'),
-	skipProviders: z.array(z.string()).default(['claude-code'])
-		.description('Providers whose sessions another plugin resumes (dsh-oh-my-claude resumes claude-code).'),
 	resumeGoals: z.boolean().default(true).description('Arm the active goal of a resumed session again.'),
 	jobMaxAgeHours: z.natural().min(1).max(168).default(24)
 		.description('A session that started a background job the restart killed is looked at when it wrote within this many hours.'),

@@ -3,46 +3,49 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { assess, lastCut, lastProvider, parentShutDown, resumeStreak, NOTICE_KIND } from '../src/detect.js';
+import { assess, lastCut, parentShutDown, resumeStreak, NOTICE_KIND } from '../src/detect.js';
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), 'utf8'));
-const DEFAULTS = { maxAgeMs: 120 * 60_000, skipProviders: ['claude-code'], maxResumes: 3 };
+const DEFAULTS = { maxAgeMs: 120 * 60_000, maxResumes: 3 };
 /** Judge a fixture a minute after its cut. */
 const judge = (f, options = {}) => {
 	const cut = lastCut(f.events);
 	return assess({ header: f.header, events: f.events, now: (cut?.time ?? 0) + 60_000, ...DEFAULTS, ...options });
 };
 
-test('a root cut by a graceful stop is resumed, unless its provider resumes its own', () => {
+test('a root cut by a graceful stop is resumed, on claude-code too', () => {
 	const f = fixture('root-claude-disposed');
 	assert.equal(lastCut(f.events).kind, 'disposed');
-	assert.equal(lastProvider(f.events), 'claude-code');
-	assert.deepEqual(judge(f), { resume: false, why: 'on claude-code, which resumes its own sessions' });
-	const verdict = judge(f, { skipProviders: [] });
+	const verdict = judge(f);
 	assert.equal(verdict.resume, true);
 	assert.equal(verdict.child, false);
 });
 
+test('a subagent cut while DSH ran its tool call is resumed, whatever its provider', () => {
+	// A claude-code child stopped mid-`bash`: the model step had ended, so no provider stream was
+	// open to see the stop. Only DSH's log has it.
+	const verdict = judge(fixture('child-tool-cut'));
+	assert.equal(verdict.resume, true);
+	assert.equal(verdict.child, true);
+	assert.equal(verdict.cut.kind, 'interrupted');
+});
+
 test('a scheduled run is left to its scheduler', () => {
-	const verdict = judge(fixture('root-scheduled-disposed'), { skipProviders: [] });
+	const verdict = judge(fixture('root-scheduled-disposed'));
 	assert.deepEqual(verdict, { resume: false, why: 'a scheduled run, which its scheduler reruns' });
 });
 
 test('a subagent cut by a hard death or a graceful stop is resumed through its parent', () => {
 	for (const name of ['child-interrupted', 'child-disposed']) {
-		const verdict = judge(fixture(name), { skipProviders: [] });
+		const verdict = judge(fixture(name));
 		assert.equal(verdict.resume, true, name);
 		assert.equal(verdict.child, true, name);
 		assert.equal(verdict.parentId, 'parent', name);
 	}
-	assert.equal(judge(fixture('child-interrupted')).resume, false, 'on claude-code: dsh-oh-my-claude wakes it');
 });
 
 test('a subagent cut with its parent counts only when the parent was shut down too', () => {
 	const shut = fixture('child-parent-shutdown');
-	// On claude-code, like every fixture here: dsh-oh-my-claude interrupts such a child and keeps no
-	// mark of it, so it is resumed from here whatever the provider.
-	assert.equal(lastProvider(shut.events), 'claude-code');
 	const verdict = judge(shut);
 	assert.equal(verdict.resume, true);
 	assert.equal(verdict.cut.kind, 'parent');
@@ -70,8 +73,8 @@ test('a subagent of an idle parent counts when the cut lies at the previous stop
 });
 
 test('a user stop, a fallback hand-over and a later turn are left alone', () => {
-	assert.deepEqual(judge(fixture('root-user-stop'), { skipProviders: [] }), { resume: false, why: 'last turn ended user' });
-	assert.deepEqual(judge(fixture('hook-abort'), { skipProviders: [] }), { resume: false, why: 'last turn ended hook' });
+	assert.deepEqual(judge(fixture('root-user-stop')), { resume: false, why: 'last turn ended user' });
+	assert.deepEqual(judge(fixture('hook-abort')), { resume: false, why: 'last turn ended hook' });
 	assert.equal(lastCut(fixture('root-newer-turn').events)?.kind, 'completed');
 	assert.equal(lastCut(fixture('parent-running').events)?.kind, 'completed');
 });
@@ -92,7 +95,7 @@ test('bookkeeping and waiting input after the cut do not hide it; a new turn doe
 test('a resume notice still waiting from an earlier start is not stacked', () => {
 	const f = fixture('child-disposed');
 	const waiting = { type: 'agent/inbox/spliced', seq: 9001, time: 1, data: { target: 'next-turn', inserted: [{ source: { kind: NOTICE_KIND } }] } };
-	assert.deepEqual(judge({ header: f.header, events: [...f.events, waiting] }, { skipProviders: [] }), {
+	assert.deepEqual(judge({ header: f.header, events: [...f.events, waiting] }), {
 		resume: false,
 		why: 'a resume notice is already waiting',
 	});
@@ -100,7 +103,7 @@ test('a resume notice still waiting from an earlier start is not stacked', () =>
 
 test('a cut older than the window is left alone', () => {
 	const f = fixture('child-disposed');
-	const verdict = judge(f, { skipProviders: [], maxAgeMs: 30_000 });
+	const verdict = judge(f, { maxAgeMs: 30_000 });
 	assert.deepEqual(verdict, { resume: false, why: 'cut too long ago' });
 });
 
@@ -123,9 +126,9 @@ test('a session cut again after each resume stops being resumed', () => {
 	assert.equal(resumeStreak(base), 0);
 	const twice = [...base, ...resumedAndCut(2)];
 	assert.equal(resumeStreak(twice), 2);
-	assert.equal(judge({ header: fixture('child-disposed').header, events: twice }, { skipProviders: [] }).resume, true);
+	assert.equal(judge({ header: fixture('child-disposed').header, events: twice }).resume, true);
 	const thrice = [...base, ...resumedAndCut(3)];
-	assert.deepEqual(judge({ header: { origin: 'subagent', parentSession: 'parent' }, events: thrice }, { skipProviders: [] }), {
+	assert.deepEqual(judge({ header: { origin: 'subagent', parentSession: 'parent' }, events: thrice }), {
 		resume: false,
 		why: 'already resumed 3 times in a row',
 	});

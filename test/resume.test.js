@@ -7,7 +7,7 @@ import { CHILD_TEXT, childrenText, ROOT_TEXT, scan } from '../src/resume.js';
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), 'utf8'));
 // The fixtures were cut on different days; the window is wide so each still counts.
-const CONFIG = { maxAgeMinutes: 1440 * 3, maxResumes: 3, skipProviders: [], resumeGoals: true };
+const CONFIG = { maxAgeMinutes: 1440 * 3, maxResumes: 3, resumeGoals: true };
 
 /** A fake DSH holding `sessions` ({ id: { header, events } }), none of them loaded. */
 function fakeDsh(sessions, options = {}) {
@@ -94,13 +94,13 @@ test('children go through their parent first; a resumed parent is told of them i
 	]);
 });
 
-test('a child whose parent another plugin resumed is continued, and the running parent is told', async () => {
+test('a child whose parent is already running again is continued, and the running parent is told', async () => {
 	const { deps, calls } = fakeDsh(
 		{
 			P: session('root-claude-disposed'),
 			C: session('child-interrupted', { origin: 'subagent', parentSession: 'P' }, 'openrouter'),
 		},
-		{ config: { skipProviders: ['claude-code'] }, running: ['P'] },
+		{ running: ['P'] },
 	);
 	const result = await scan(deps);
 	assert.deepEqual(result, { roots: [], children: ['C'] });
@@ -162,4 +162,18 @@ test('a failed resume is logged and the scan goes on', async () => {
 	const result = await scan(deps);
 	assert.equal(result.roots.length, 1);
 	assert.ok(calls.some((c) => c[0] === 'log' && c[1].includes('failed: Error: log refused')));
+});
+
+test('a child someone continued after the scan read it is left alone', async () => {
+	// The scan lists and reads first; a parent or a person may re-prompt the child before its turn
+	// comes. That turn already carries the work, so no notice joins it.
+	const { deps, calls } = fakeDsh({
+		C: session('child-tool-cut', { origin: 'subagent', parentSession: 'P' }),
+		P: session('parent-running'),
+	});
+	deps.liveAgent = (id) => (id === 'C' ? { id, status: 'running' } : undefined);
+	const result = await scan(deps);
+	assert.deepEqual(result.children, []);
+	assert.equal(calls.filter((c) => c[0] === 'send').length, 0);
+	assert.ok(calls.some((c) => c[0] === 'log' && c[1] === 'skip C: a turn already runs'));
 });

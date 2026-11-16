@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.3.0]
+
+### Changed
+
+- Cut turns are continued on every provider; `skipProviders` is gone. A provider plugin sees only its own model stream, so a turn cut while DSH was running one of its tools was left to a provider that never saw the cut (dsh-oh-my-claude left three such claude-code subagents idle in one restart). Pair it with dsh-oh-my-claude's `resumeAfterRestart: false`, so that plugin only reattaches its Claude processes.
+- `delaySeconds` defaults to 10 (was 60): nothing else resumes first any more.
+- The notice says tool calls that failed while DSH was down work again.
+
+### Fixed
+
+- A subagent that was re-prompted after the scan read its log is no longer sent the notice on top.
+
 ## [0.2.0]
 
 ### Added

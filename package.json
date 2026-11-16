@@ -1,6 +1,6 @@
 {
   "name": "@soffits/dsh-restart-resume",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Continue the work a DeepSeek Harness restart cut off, subagents included: cut turns and sessions whose background jobs it killed, one scan after start, children resumed through their parent.",
   "type": "module",
   "main": "./index.js",
