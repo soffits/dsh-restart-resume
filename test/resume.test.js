@@ -156,15 +156,18 @@ test('a scheduled run nobody claims gets a notice like any root; a refused one i
 	assert.ok(!again.calls.some((c) => c[0] === 'followup'));
 });
 
-test('sessions that last wrote before the previous process started are not read', async () => {
-	const { deps, calls } = fakeDsh({ R: session('root-claude-disposed') });
-	const read = [];
-	const readSession = deps.readSession;
-	deps.readSession = async (id) => (read.push(id), readSession(id));
-	deps.previousStart = deps.now() + 3_600_000;
-	assert.deepEqual(continued(await scan(deps)), { roots: [], children: [] });
-	assert.deepEqual(read, []);
-	assert.equal(calls.filter((c) => c[0] !== 'log').length, 0);
+test('a subagent whose list entry still shows its first prompt is read and continued', async () => {
+	// The 19:22Z restart: DSH lists a subagent's `updatedAt` as its creation or last prompt, so a
+	// child working for an hour looked older than the previous process and was never read.
+	const { deps, calls } = fakeDsh({
+		C: session('child-tool-cut', { origin: 'subagent', parentSession: 'P' }),
+		P: session('parent-running'),
+	});
+	const listSessions = deps.listSessions;
+	deps.listSessions = async () => (await listSessions()).map((s) => ({ ...s, updatedAt: deps.now() - 3_600_000 }));
+	deps.previousStart = deps.now() - 300_000;
+	assert.deepEqual(continued(await scan(deps)), { roots: [], children: ['C'] });
+	assert.ok(calls.some((c) => c[0] === 'send' && c[2] === 'C'));
 });
 
 test('archived roots, running sessions and stopped turns are left alone', async () => {

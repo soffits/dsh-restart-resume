@@ -73,11 +73,10 @@ export async function scan(deps) {
 	const listAgeMs = Math.max(maxAgeMs, (config.jobMaxAgeHours ?? 24) * 3_600_000);
 	// Not filtered on `blank`: DSH reports a cold subagent whose turn never finished as blank.
 	const listed = await deps.listSessions();
-	// Whatever the previous process cut or killed, it wrote to while it ran: a session that last wrote
-	// before it started has nothing of that process to lose. Most sessions are filtered out here,
-	// which keeps the scan short enough to finish before anyone checks on it.
-	const since = Math.max(now - listAgeMs - 5 * 60_000, (deps.previousStart ?? 0) - PROCESS_SLACK_MS);
-	const summaries = listed.filter((s) => !s.running && (s.updatedAt ?? 0) >= since);
+	// The list's `updatedAt` is the session's creation or last prompt, not its last write (a
+	// subagent's stays at its first prompt while it works for hours), so it bounds the window only
+	// loosely and every session in it is read.
+	const summaries = listed.filter((s) => !s.running && now - (s.updatedAt ?? 0) <= listAgeMs + 5 * 60_000);
 	const stop = deps.previousStop === undefined ? 'unknown' : new Date(deps.previousStop).toISOString();
 	await log(`scan: ${summaries.length} of ${listed.length} sessions changed recently; previous DSH stop ${stop}`);
 	const archived = deps.archived();
@@ -87,13 +86,19 @@ export async function scan(deps) {
 		skipped.push({ id, why });
 		await log(`skip ${id}: ${why}`);
 	};
-	for (const summary of summaries) {
-		const id = summary.sessionId;
-		if (summary.parentSessionId === undefined && archived.has(id)) continue;
-		let snapshot;
+	const wanted = summaries.filter((s) => !(s.parentSessionId === undefined && archived.has(s.sessionId)));
+	// Reading the logs is the scan's whole cost; several at once keep it short.
+	const reads = await mapLimit(wanted, READ_CONCURRENCY, async (summary) => {
 		try {
-			snapshot = await deps.readSession(id);
+			return { snapshot: await deps.readSession(summary.sessionId) };
 		} catch (error) {
+			return { error };
+		}
+	});
+	for (const [index, summary] of wanted.entries()) {
+		const id = summary.sessionId;
+		const { snapshot, error } = reads[index];
+		if (snapshot === undefined) {
 			await skip(id, `log unreadable: ${String(error)}`);
 			continue;
 		}
@@ -154,8 +159,22 @@ export async function scan(deps) {
 	return { roots, children, claimed, skipped };
 }
 
-/** Margin on the previous process's start when filtering sessions by their last write. */
-export const PROCESS_SLACK_MS = 60_000;
+/** How many session logs the scan reads at once. */
+export const READ_CONCURRENCY = 8;
+
+/** `fn` over `items`, at most `limit` at a time, results in order. */
+async function mapLimit(items, limit, fn) {
+	const out = new Array(items.length);
+	let next = 0;
+	const worker = async () => {
+		while (next < items.length) {
+			const index = next++;
+			out[index] = await fn(items[index]);
+		}
+	};
+	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+	return out;
+}
 
 /**
  * Hand a cut turn to the plugin that started it (a scheduler, which delivers the run's answer and
