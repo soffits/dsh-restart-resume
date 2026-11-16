@@ -15,10 +15,27 @@ A turn counts as cut off when it ended `interrupted` (DSH died) or `aborted` wit
 Left alone on purpose:
 
 - Turns someone stopped, and turns a fallback plugin handed to another model.
-- Runs started by the scheduler (message source `schedule`), which reruns its own cut-off runs.
 - Archived root sessions.
 - A session that was cut off again right after each of its last three resumes, so a turn that keeps taking DSH down doesn't loop.
 - Anything when the plugin is installed or enabled into a DSH that has been running for more than five minutes: there is no restart to recover from.
+
+A turn a plugin started under its own name (a scheduler's run: the prompt's `source.principal`) goes back to that plugin when it has claimed that kind of principal, since only it can deliver the run's answer and know whether the run is still worth finishing. It claims through this plugin's `restartResume` service:
+
+```js
+ctx.inject(['restartResume'], (sub) => {
+  const drop = sub.restartResume.claim('cron-job', async ({ sessionId, principal, cut, jobs }) => {
+    // rerun the job's cut turn, or not
+    return { continued: true } // or { continued: false, why: 'the next run is due soon' }
+  })
+  sub.effect(() => drop)
+})
+```
+
+[dsh-cron-jobs](https://github.com/soffits/dsh-cron-jobs) 0.13.0 and later claims its `cron-job` runs this way. A cut turn whose principal nobody claimed gets the ordinary notice.
+
+Background jobs the restart killed are named in the notice, also the ones the cut turn itself was waiting on, so the model starts them again instead of waiting on a report that never comes.
+
+Only sessions that wrote while the previous DSH process ran are read (what that process cut or killed, it wrote to), so the scan takes seconds. When it is done it writes `last-scan.json` next to `resume.log`: `boot`, `startedAt`, `doneAt`, and the session ids it continued (`roots`, `children`), handed to their owner (`claimed`), and left alone with a reason (`skipped`, `{ id, why }`). A check after a restart reads that record rather than racing the scan.
 
 Every decision is written to `resume.log` in `~/.local/state/dsh-restart-resume` (or `$XDG_STATE_HOME/dsh-restart-resume`, or `DSH_RESTART_RESUME_STATE_DIR`), next to `stopped.json`, the time DSH last stopped.
 

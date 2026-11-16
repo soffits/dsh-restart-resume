@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.4.0]
+
+### Added
+
+- `restartResume` service: a plugin that starts turns under its own principal kind (a scheduler) claims that kind, and the scan hands such cut turns to it instead of sending a notice. dsh-cron-jobs 0.13.0 claims `cron-job`. Unclaimed scheduled runs now get the ordinary notice (they were skipped).
+- `last-scan.json` in the state directory: when the scan ran and what it continued, handed over and skipped.
+
+### Changed
+
+- The scan reads only sessions that wrote while the previous DSH process ran, so it finishes in seconds instead of reading every session changed in a day.
+- Background jobs the cut turn itself was waiting on are named in the notice as killed.
+
 ## [0.3.0]
 
 ### Changed

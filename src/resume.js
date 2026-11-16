@@ -59,7 +59,10 @@ export function childrenText(ids) {
 /**
  * Run one scan.
  * @param {object} deps - DSH's services, narrowed (see index.js), plus `now`, `log` and the config.
- * @returns {Promise<{ roots: string[], children: string[] }>} the sessions continued.
+ * `deps.claims` maps a principal kind to the handler of the plugin that started such turns (see
+ * index.js); a cut turn one of them started is handed to it instead of getting a notice.
+ * @returns {Promise<{ roots: string[], children: string[], claimed: string[], skipped: { id: string, why: string }[] }>}
+ *   the sessions continued, handed over, and left alone with a reason worth logging.
  */
 export async function scan(deps) {
 	const { config, log } = deps;
@@ -70,11 +73,20 @@ export async function scan(deps) {
 	const listAgeMs = Math.max(maxAgeMs, (config.jobMaxAgeHours ?? 24) * 3_600_000);
 	// Not filtered on `blank`: DSH reports a cold subagent whose turn never finished as blank.
 	const listed = await deps.listSessions();
-	const summaries = listed.filter((s) => !s.running && now - (s.updatedAt ?? 0) <= listAgeMs + 5 * 60_000);
+	// Whatever the previous process cut or killed, it wrote to while it ran: a session that last wrote
+	// before it started has nothing of that process to lose. Most sessions are filtered out here,
+	// which keeps the scan short enough to finish before anyone checks on it.
+	const since = Math.max(now - listAgeMs - 5 * 60_000, (deps.previousStart ?? 0) - PROCESS_SLACK_MS);
+	const summaries = listed.filter((s) => !s.running && (s.updatedAt ?? 0) >= since);
 	const stop = deps.previousStop === undefined ? 'unknown' : new Date(deps.previousStop).toISOString();
 	await log(`scan: ${summaries.length} of ${listed.length} sessions changed recently; previous DSH stop ${stop}`);
 	const archived = deps.archived();
 	const plan = [];
+	const skipped = [];
+	const skip = async (id, why) => {
+		skipped.push({ id, why });
+		await log(`skip ${id}: ${why}`);
+	};
 	for (const summary of summaries) {
 		const id = summary.sessionId;
 		if (summary.parentSessionId === undefined && archived.has(id)) continue;
@@ -82,7 +94,7 @@ export async function scan(deps) {
 		try {
 			snapshot = await deps.readSession(id);
 		} catch (error) {
-			await log(`skip ${id}: log unreadable: ${String(error)}`);
+			await skip(id, `log unreadable: ${String(error)}`);
 			continue;
 		}
 		const verdict = assess({
@@ -97,7 +109,7 @@ export async function scan(deps) {
 		});
 		if (!verdict.resume) {
 			if (verdict.why !== 'no cut turn at the tail' && !verdict.why.startsWith('last turn ended completed'))
-				await log(`skip ${id}: ${verdict.why}`);
+				await skip(id, verdict.why);
 			continue;
 		}
 		if (verdict.child && verdict.cut?.kind === 'parent') {
@@ -105,11 +117,11 @@ export async function scan(deps) {
 			try {
 				parent = await deps.readSession(verdict.parentId);
 			} catch (error) {
-				await log(`skip ${id}: parent ${verdict.parentId} unreadable: ${String(error)}`);
+				await skip(id, `parent ${verdict.parentId} unreadable: ${String(error)}`);
 				continue;
 			}
 			if (!parentShutDown(parent.events, verdict.cut.time, deps.previousStop)) {
-				await log(`skip ${id}: its parent was stopped, not shut down`);
+				await skip(id, 'its parent was stopped, not shut down');
 				continue;
 			}
 		}
@@ -119,21 +131,49 @@ export async function scan(deps) {
 	const continuedByParent = new Map();
 	const children = [];
 	for (const item of plan.filter((p) => p.child)) {
-		if (await resumeChild(deps, item)) {
+		if (await resumeChild(deps, item, skip)) {
 			children.push(item.id);
 			continuedByParent.set(item.parentId, [...(continuedByParent.get(item.parentId) ?? []), item.id]);
 		}
 	}
 	const roots = [];
+	const claimed = [];
 	for (const item of plan.filter((p) => !p.child)) {
+		const handler = item.cut && item.principal?.kind !== undefined ? deps.claims?.get(item.principal.kind) : undefined;
+		if (handler !== undefined) {
+			if (await handOver(deps, item, handler, skip)) claimed.push(item.id);
+			continue;
+		}
 		const told = continuedByParent.get(item.id);
-		if (await resumeRoot(deps, item, told)) {
+		if (await resumeRoot(deps, item, told, skip)) {
 			roots.push(item.id);
 			continuedByParent.delete(item.id);
 		}
 	}
 	for (const [parentId, ids] of continuedByParent) await tellParent(deps, parentId, ids);
-	return { roots, children };
+	return { roots, children, claimed, skipped };
+}
+
+/** Margin on the previous process's start when filtering sessions by their last write. */
+export const PROCESS_SLACK_MS = 60_000;
+
+/**
+ * Hand a cut turn to the plugin that started it (a scheduler, which delivers the run's answer and
+ * knows whether the run is still worth finishing). Its answer says whether it continued the turn.
+ */
+async function handOver(deps, item, handler, skip) {
+	const kind = item.principal.kind;
+	try {
+		const answer = await handler({ sessionId: item.id, principal: item.principal, cut: item.cut, jobs: item.jobs });
+		if (answer?.continued) {
+			await deps.log(`handed ${item.id} to its ${kind} owner, which continued it (${what(item)})`);
+			return true;
+		}
+		await skip(item.id, `its ${kind} owner did not continue it: ${answer?.why ?? 'no reason given'}`);
+	} catch (error) {
+		await skip(item.id, `its ${kind} owner failed: ${String(error)}`);
+	}
+	return false;
 }
 
 /** The live Agent of a session, loading it when DSH has not. Throws when DSH refuses it. */
@@ -150,7 +190,7 @@ function notice(deps, texts) {
 	});
 }
 
-async function resumeRoot(deps, item, children) {
+async function resumeRoot(deps, item, children, skip) {
 	const { log } = deps;
 	try {
 		const agent = await agentOf(deps, item.id);
@@ -166,21 +206,21 @@ async function resumeRoot(deps, item, children) {
 		rearmGoal(deps, agent, item.id);
 		return true;
 	} catch (error) {
-		await log(`resume ${item.id} failed: ${String(error)}`);
+		await skip(item.id, `resume failed: ${String(error)}`);
 		return false;
 	}
 }
 
-async function resumeChild(deps, item) {
+async function resumeChild(deps, item, skip) {
 	const { log } = deps;
 	// Someone continued it since the scan read its log (its parent, or a person): a notice now
 	// would land in that turn as stale news.
 	if (deps.liveAgent(item.id)?.status === 'running') {
-		await log(`skip ${item.id}: a turn already runs`);
+		await skip(item.id, 'a turn already runs');
 		return false;
 	}
 	if (deps.subagents === undefined) {
-		await log(`skip ${item.id}: no subagent service to reach it through`);
+		await skip(item.id, 'no subagent service to reach it through');
 		return false;
 	}
 	try {
@@ -190,7 +230,7 @@ async function resumeChild(deps, item) {
 		await log(`resumed ${item.id} through parent ${item.parentId} (${what(item)})`);
 		return true;
 	} catch (error) {
-		await log(`resume ${item.id} through parent ${item.parentId} failed: ${String(error)}`);
+		await skip(item.id, `resume through parent ${item.parentId} failed: ${String(error)}`);
 		return false;
 	}
 }
