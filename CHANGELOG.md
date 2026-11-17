@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.5.0]
+
+### Added
+
+- A scan after a profile reload: when the row is applied again in a running DSH (the subagent runtime was reloaded with it and every running subagent stopped), it continues the turns cut since it was disposed, with a notice that says a reload cut them. Setting `resumeAfterReload` (default on).
+
 ## [0.4.1]
 
 ### Fixed

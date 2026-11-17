@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { lastCut } from '../src/detect.js';
-import { CHILD_TEXT, childrenText, ROOT_TEXT, scan } from '../src/resume.js';
+import { CHILD_TEXT, childrenText, cutText, ROOT_TEXT, scan } from '../src/resume.js';
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), 'utf8'));
 // The fixtures were cut on different days; the window is wide so each still counts.
@@ -214,4 +214,25 @@ test('a child someone continued after the scan read it is left alone', async () 
 	assert.deepEqual(result.children, []);
 	assert.equal(calls.filter((c) => c[0] === 'send').length, 0);
 	assert.ok(calls.some((c) => c[0] === 'log' && c[1] === 'skip C: a turn already runs'));
+});
+
+test('a scan after a reload says the reload cut the turn, not a restart', async () => {
+	const sessions = { R: session('root-claude-disposed'), C: session('child-disposed', { origin: 'subagent', parentSession: 'R' }) };
+	const { deps, calls } = fakeDsh(sessions);
+	const cut = lastCut(sessions.R.events).time;
+	const result = await scan({ ...deps, cause: 'reload', cutNotBefore: cut - 30_000, bootTime: 0 });
+	assert.deepEqual(continued(result), { roots: ['R'], children: ['C'] });
+	const sent = calls.filter((c) => c[0] === 'send' || c[0] === 'followup').flatMap((c) => c.flat(2));
+	assert.ok(sent.some((text) => typeof text === 'string' && text.includes('part of DSH was reloaded')));
+	assert.ok(!sent.includes(ROOT_TEXT) && !sent.includes(CHILD_TEXT));
+	assert.equal(cutText('reload', true).includes('Continue your task'), true);
+});
+
+test('a scan after a reload leaves a turn cut before the reload alone', async () => {
+	const sessions = { R: session('root-claude-disposed') };
+	const { deps, calls } = fakeDsh(sessions);
+	const cut = lastCut(sessions.R.events).time;
+	const result = await scan({ ...deps, cause: 'reload', cutNotBefore: cut + 1_000, bootTime: 0 });
+	assert.deepEqual(continued(result), { roots: [], children: [] });
+	assert.ok(calls.some((c) => c[0] === 'log' && c[1].includes('cut before the reload')));
 });
