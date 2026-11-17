@@ -103,6 +103,7 @@ export function apply(ctx, config) {
 				scan(scanDeps({
 					cause: 'reload',
 					cutNotBefore: since - RELOAD_SLACK_MS,
+					previousStop: since,
 					bootTime: 0, // no process started: the background jobs of other sessions are still running
 				})).then((result) => log(`reload scan done: ${result.roots.length} root(s), ${result.children.length} subagent(s) continued, ${result.claimed.length} handed to their owner`))
 					.catch((error) => log(`reload scan failed: ${String(error)}`));
