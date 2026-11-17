@@ -12,15 +12,26 @@
  */
 import { assess, NOTICE_KIND, parentShutDown } from './detect.js';
 
-export const ROOT_TEXT = '[Restart Resume] DSH restarted while this turn was running, and the turn was cut off. '
-	+ 'Continue the task from where it stopped. A tool call that was cut off may or may not have taken effect: '
-	+ 'check its effects before running it again. Tool calls that failed while DSH was down (a tool server not '
-	+ 'connected, a connection refused) work again now.';
+/** What cut the turn, as the notice says it: the whole of DSH restarted, or part of it was reloaded in place. */
+const CAUSES = {
+	restart: { what: 'DSH restarted', down: 'DSH was down (a tool server not connected, a connection refused)' },
+	reload: { what: 'part of DSH was reloaded after a profile change', down: 'the reload ran (a tool server not connected, a connection refused)' },
+};
 
-export const CHILD_TEXT = '[Restart Resume] DSH restarted while you were working, and your turn was cut off. '
-	+ 'Continue your task from where it stopped and report to your parent as before. A tool call that was cut off '
-	+ 'may or may not have taken effect: check its effects before running it again. Tool calls that failed while '
-	+ 'DSH was down (a tool server not connected, a connection refused) work again now.';
+/** The notice for a turn the cause cut off; `child` addresses a subagent instead of a root session. */
+export function cutText(cause, child) {
+	const { what, down } = CAUSES[cause];
+	return child
+		? `[Restart Resume] ${what} while you were working, and your turn was cut off. `
+			+ 'Continue your task from where it stopped and report to your parent as before. A tool call that was cut off '
+			+ `may or may not have taken effect: check its effects before running it again. Tool calls that failed while ${down} work again now.`
+		: `[Restart Resume] ${what} while this turn was running, and the turn was cut off. `
+			+ 'Continue the task from where it stopped. A tool call that was cut off may or may not have taken effect: '
+			+ `check its effects before running it again. Tool calls that failed while ${down} work again now.`;
+}
+
+export const ROOT_TEXT = cutText('restart', false);
+export const CHILD_TEXT = cutText('restart', true);
 
 /** The notice for background jobs the restart killed, which will never report back. */
 export function jobsText(jobs, child) {
@@ -33,9 +44,9 @@ export function jobsText(jobs, child) {
 }
 
 /** The texts of one session's notice: the cut turn, the jobs it lost, or both. */
-export function noticeTexts(item) {
+export function noticeTexts(item, cause = 'restart') {
 	const texts = [];
-	if (item.cut) texts.push(item.child ? CHILD_TEXT : ROOT_TEXT);
+	if (item.cut) texts.push(cutText(cause, item.child));
 	if (item.jobs?.length) texts.push(jobsText(item.jobs, item.child));
 	return texts;
 }
@@ -111,6 +122,7 @@ export async function scan(deps) {
 			bootTime: deps.bootTime ?? now,
 			previousStop: deps.previousStop,
 			previousStart: deps.previousStart,
+			cutNotBefore: deps.cutNotBefore,
 		});
 		if (!verdict.resume) {
 			if (verdict.why !== 'no cut turn at the tail' && !verdict.why.startsWith('last turn ended completed'))
@@ -213,7 +225,7 @@ async function resumeRoot(deps, item, children, skip) {
 	const { log } = deps;
 	try {
 		const agent = await agentOf(deps, item.id);
-		const texts = noticeTexts(item);
+		const texts = noticeTexts(item, deps.cause);
 		const message = notice(deps, children ? [...texts, childrenText(children)] : texts);
 		// A turn may have started meanwhile: a child continued a moment ago that already reported
 		// back. That turn still needs to know its own task was cut, so the notice joins it.
@@ -244,7 +256,7 @@ async function resumeChild(deps, item, skip) {
 	}
 	try {
 		const parent = await agentOf(deps, item.parentId);
-		const content = noticeTexts(item).map((text) => ({ type: 'text', text }));
+		const content = noticeTexts(item, deps.cause).map((text) => ({ type: 'text', text }));
 		await deps.subagents.sendMessage(parent, item.id, content, { signal: AbortSignal.timeout(30_000) });
 		await log(`resumed ${item.id} through parent ${item.parentId} (${what(item)})`);
 		return true;

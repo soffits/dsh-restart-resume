@@ -41,6 +41,10 @@ Every decision is written to `resume.log` in `~/.local/state/dsh-restart-resume`
 
 Every provider is handled the same way, because only DSH's session log sees every cut: a provider plugin sees its own model stream, and a turn cut while DSH was running one of the turn's tools has no stream open. A provider plugin that keeps its process alive through a restart should only reattach it and leave continuing the turn to this plugin; for [dsh-oh-my-claude](https://github.com/lcestou/dsh-oh-my-claude) that is `resumeAfterRestart: false` (from the version that has the switch). The notice tells the model that tool calls which failed while DSH was down work again.
 
+## Reloads
+
+A profile change can reload part of a running DSH: the config of a first-party row such as `sandbox-policy` restarts that row and every plugin that injects it, the subagent runtime among them, and disposing the runtime ends every running subagent and the turns of the sessions it owned. No process restarts, so there is no boot scan. This plugin injects the same services, so it is disposed and applied again by such a reload; applied again in a running process it waits `delaySeconds`, then runs the same scan over the turns cut since it was disposed and continues them, with a notice that says a reload cut the turn. Background jobs are left alone (their sessions kept running). A reload that does not touch those services (a plugin update, a comment line, a community plugin's row) cuts nothing and finds nothing.
+
 ## Install
 
 ```sh
@@ -58,6 +62,7 @@ The bundle adds one host row, `restart-resume`. It takes effect at the next DSH 
 | `maxAgeMinutes` | `120` | A turn cut off longer ago than this is left alone. |
 | `maxResumes` | `3` | A session cut off again this many times in a row right after a resume is left alone. |
 | `resumeGoals` | `true` | Arm a resumed session's active goal again. |
+| `resumeAfterReload` | `true` | Also continue the turns a profile reload cut (see "Reloads"). |
 | `jobMaxAgeHours` | `24` | A session that last wrote longer ago than this is not checked for killed jobs (a long wait writes nothing while it runs). |
 
 For example, in a profile patch:
