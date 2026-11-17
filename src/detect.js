@@ -197,11 +197,12 @@ function noticeWaiting(events) {
  * @param {number} [input.bootTime] - epoch ms this DSH process started.
  * @param {number} [input.previousStop] - epoch ms the previous process stopped, if known.
  * @param {number} [input.previousStart] - epoch ms the previous process started, if known.
+ * @param {number} [input.cutNotBefore] - epoch ms; a cut older than this is left alone (a scan after a reload looks only at what the reload cut).
  * @returns {{ resume: false, why: string } | { resume: true, child: boolean, parentId?: string, cut?: object,
  *   jobs: { id: string, label: string }[], principal?: object }} `cut` is absent when only background jobs
  *   were lost; `principal` is who started a cut root turn, when it names itself (see turnPrincipal).
  */
-export function assess({ header, events, now, maxAgeMs, maxResumes, bootTime = now, previousStop, previousStart }) {
+export function assess({ header, events, now, maxAgeMs, maxResumes, bootTime = now, previousStop, previousStart, cutNotBefore }) {
 	const child = header.origin === 'subagent' && Boolean(header.parentSession);
 	const jobs = lostJobs(events, bootTime, previousStop, previousStart);
 	const cut = lastCut(events);
@@ -215,6 +216,7 @@ export function assess({ header, events, now, maxAgeMs, maxResumes, bootTime = n
 		return { resume: false, why: `last turn ended ${cut.kind}` };
 	}
 	if (now - cut.time > maxAgeMs) return { resume: false, why: 'cut too long ago' };
+	if (cutNotBefore !== undefined && cut.time < cutNotBefore) return { resume: false, why: 'cut before the reload' };
 	if (cut.waiting.includes(NOTICE_KIND)) return { resume: false, why: 'a resume notice is already waiting' };
 	if (resumeStreak(events) >= maxResumes)
 		return { resume: false, why: `already resumed ${maxResumes} times in a row` };
