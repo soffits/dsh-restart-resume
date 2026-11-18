@@ -10,6 +10,7 @@ A DeepSeek Harness host plugin: one scan per DSH process, shortly after start, t
 - `src/state.js`: the state directory and the decision log.
 - `test/fixtures/*.json`: real session logs, anonymised (content, tool data and ids replaced), cut at the moment DSH next started.
 - `tools/e2e.mjs`: the end-to-end check against a real DSH in a throwaway `DSH_HOME` under `.e2e/`, with a scripted OpenAI-compatible model.
+- `tools/dump.mjs`, `tools/cuts.mjs`, `tools/scan.mjs`, `tools/fixture.mjs`: reading real session logs (read-only): one session's events (zstd decoded), the turns cut by a stop in the last days, the shapes of `turn/end`, and a test fixture of a session at the boot after a cut (content, tool arguments and ids replaced). Read a fixture through before committing it.
 
 ## Checks
 
