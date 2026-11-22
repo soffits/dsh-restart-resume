@@ -26,4 +26,4 @@
 {"type":"step/start","seq":222,"time":1794465812493,"data":{}},
 {"type":"agent/inbox/spliced","seq":225,"time":1794465815389,"data":{"target":"next-turn","inserted":[{"source":{"kind":"model-fallback","form":"notice"}}]}},
 {"type":"step/end","seq":226,"time":1794465815394,"data":{}},
-{"type":"turn/end","seq":227,"time":1794465815394,"data":{"turn":1,"reason":{"kind":"aborted","reason":{"kind":"hook","reason":"dsh-fallback-models: anthropic/claude-sonnet-5-5 failed (PI_AI_ERROR); continuing on example-gateway/gemini-4-argon-high"}}}}]}
+{"type":"turn/end","seq":227,"time":1794465815394,"data":{"turn":1,"reason":{"kind":"aborted","reason":{"kind":"hook","reason":"dsh-fallback-models: anthropic/claude-sonnet-5-5 failed (PI_AI_ERROR); continuing on google/gemini-pro"}}}}]}
