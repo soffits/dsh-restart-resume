@@ -1,5 +1,3 @@
-> **Moved.** This plugin is now part of [@soffits/dsh-companion-runtime](https://github.com/soffits/dsh-companion-runtime) (`restart-resume/`). This repository is archived.
-
 # dsh-restart-resume
 
 A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that continues the turns a DSH restart cut off, subagents included. Without it, every session that was working when DSH stopped sits there until someone types "continue", and a subagent cut off mid-task never comes back at all.
